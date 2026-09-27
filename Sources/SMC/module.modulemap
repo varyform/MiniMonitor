@@ -1,0 +1,4 @@
+module SMC [system] {
+    header "SMC.h"
+    export *
+}

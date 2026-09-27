@@ -1,5 +1,6 @@
 import AppKit
 import IOKit
+import SMC
 import ServiceManagement
 
 // MARK: - Sensors

@@ -4,16 +4,13 @@
 set -e
 cd "$(dirname "$0")"
 
+swift build -c release
+
 APP=build/MiniMonitor.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp Info.plist "$APP/Contents/"
-
-swiftc -O -swift-version 5 \
-  -target "$(uname -m)-apple-macos13.0" \
-  -import-objc-header Sources/SMC.h \
-  -framework IOKit \
-  Sources/*.swift -o "$APP/Contents/MacOS/MiniMonitor"
+cp "$(swift build -c release --show-bin-path)/MiniMonitor" "$APP/Contents/MacOS/"
 
 codesign --force --sign - "$APP"
 echo "Built $APP"
