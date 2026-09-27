@@ -107,8 +107,11 @@ final class CPUTemperature {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let interval: TimeInterval = 2
-    private let graphSize = NSSize(width: 36, height: 16)
-    private let barWidth: CGFloat = 0.5  // one device pixel on Retina
+    // Stats' line chart widget is 32pt wide; this one is 20% wider. Height is the
+    // menu bar height minus 2pt margins, as in Stats.
+    private let graphSize = NSSize(width: 38, height: 18)
+    private let graphGap: CGFloat = 4  // transparent space between temperature and chart
+    private let historyCount = 60
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
@@ -116,11 +119,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         title: "Start at Login", action: #selector(toggleLogin), keyEquivalent: "")
     private let cpu = CPULoad()
     private let temperature = CPUTemperature()
-    private var history: [Double] = []
+    private var history: [Double] = []  // oldest first, at most historyCount
     private var timer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        history = Array(repeating: 0, count: Int((graphSize.width - 4) / barWidth))
 
         loginItem.target = self
         menu.addItem(loginItem)
@@ -168,8 +170,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func tick() {
         if let load = cpu.sample() {
-            history.removeFirst()
             history.append(load)
+            if history.count > historyCount { history.removeFirst() }
         }
         guard let button = statusItem.button else { return }
         let title = temperature.read().map { "\(Int($0.rounded()))°" } ?? "--°"
@@ -179,24 +181,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func graphImage() -> NSImage {
         let samples = history
-        let barWidth = barWidth
-        let image = NSImage(size: graphSize, flipped: false) { rect in
+        let slots = historyCount
+        let gap = graphGap
+        let size = NSSize(width: graphGap + graphSize.width, height: graphSize.height)
+        let image = NSImage(size: size, flipped: false) { bounds in
+            let rect = NSRect(x: gap, y: 0, width: bounds.width - gap, height: bounds.height)
+            // Same geometry as Stats' LineChart widget in "frame" mode.
+            let pixel = 1 / (NSScreen.main?.backingScaleFactor ?? 2)
+            let half = pixel / 2
             let frame = NSBezierPath(
-                roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 3, yRadius: 3)
-            NSColor.black.withAlphaComponent(0.5).setStroke()
-            frame.stroke()
+                roundedRect: rect.insetBy(dx: half, dy: half), xRadius: 2, yRadius: 2)
+            frame.lineWidth = pixel
 
-            let plot = rect.insetBy(dx: 2, dy: 2)
-            let bars = NSBezierPath()
-            for (index, value) in samples.enumerated() {
-                let height = max(barWidth, plot.height * min(value, 1))
-                bars.appendRect(
-                    NSRect(
-                        x: plot.minX + CGFloat(index) * barWidth, y: plot.minY, width: barWidth,
-                        height: height))
+            if samples.count > 1 {
+                let plot = NSRect(
+                    x: frame.bounds.minX + half + pixel, y: half,
+                    width: frame.bounds.width - 2 * half - pixel,
+                    height: frame.bounds.height - half)
+                let step = plot.width / CGFloat(slots - 1)
+                let firstX = plot.minX + CGFloat(slots - samples.count) * step  // newest on the right
+                let points = samples.enumerated().map { index, value in
+                    NSPoint(
+                        x: firstX + CGFloat(index) * step,
+                        y: plot.minY + (plot.height - half) * min(max(value, 0), 1))
+                }
+
+                let line = NSBezierPath()
+                line.move(to: points[0])
+                points.dropFirst().forEach(line.line(to:))
+                line.lineWidth = pixel
+                NSColor.black.setStroke()
+                line.stroke()
+
+                let area = line.copy() as! NSBezierPath
+                area.line(to: NSPoint(x: points[points.count - 1].x, y: plot.minY))
+                area.line(to: NSPoint(x: points[0].x, y: plot.minY))
+                area.close()
+                NSGradient(
+                    starting: NSColor.black.withAlphaComponent(0.25),
+                    ending: NSColor.black.withAlphaComponent(0.5)
+                )?.draw(in: area, angle: 90)
             }
-            NSColor.black.setFill()
-            bars.fill()
+
+            NSColor.black.setStroke()
+            frame.stroke()
             return true
         }
         image.isTemplate = true  // follows menu bar light/dark and highlight
