@@ -22,3 +22,7 @@ It updates every 2 seconds and pauses while the display sleeps. It uses about 0.
 ```
 
 Install to `/Applications` before you turn on **Start at Login**.
+
+## License
+
+[MIT](LICENSE)
