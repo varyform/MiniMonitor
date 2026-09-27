@@ -1,18 +1,29 @@
-#include <IOKit/hidsystem/IOHIDEventSystemClient.h>
-#include <IOKit/hidsystem/IOHIDServiceClient.h>
+#include <stdint.h>
 
-// Private IOKit HID API used to read Apple Silicon temperature sensors.
-// Implicit bridging lets Swift manage the +1 reference returned by the Copy
-// call.
-CF_ASSUME_NONNULL_BEGIN
-CF_IMPLICIT_BRIDGING_ENABLED
+// AppleSMC user-client struct (IOConnectCallStructMethod selector 2). Declared
+// in C so the 80-byte kernel layout, including padding, is guaranteed.
+typedef struct {
+  uint8_t major, minor, build, reserved;
+  uint16_t release;
+} SMCVersion;
 
-typedef struct CF_BRIDGED_TYPE(id) __IOHIDEvent *IOHIDEventRef;
+typedef struct {
+  uint16_t version, length;
+  uint32_t cpuPLimit, gpuPLimit, memPLimit;
+} SMCPLimitData;
 
-IOHIDEventRef _Nullable IOHIDServiceClientCopyEvent(
-    IOHIDServiceClientRef service, int64_t type, int32_t options,
-    int64_t timestamp);
-double IOHIDEventGetFloatValue(IOHIDEventRef event, int32_t field);
+typedef struct {
+  uint32_t dataSize;
+  uint32_t dataType;
+  uint8_t dataAttributes;
+} SMCKeyInfo;
 
-CF_IMPLICIT_BRIDGING_DISABLED
-CF_ASSUME_NONNULL_END
+typedef struct {
+  uint32_t key;
+  SMCVersion vers;
+  SMCPLimitData pLimitData;
+  SMCKeyInfo keyInfo;
+  uint8_t result, status, data8;
+  uint32_t data32;
+  uint8_t bytes[32];
+} SMCParam;

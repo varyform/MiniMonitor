@@ -1,4 +1,5 @@
 import AppKit
+import IOKit
 import ServiceManagement
 
 // MARK: - Sensors
@@ -30,42 +31,74 @@ final class CPULoad {
     }
 }
 
-/// Apple Silicon CPU die temperature, averaged over the PMU "tdie" sensors.
+/// "Hottest CPU" as Stats computes it (and close to iStat Menus): the highest
+/// per-core SMC temperature. The PMU die sensors read ~10° cooler than both.
 final class CPUTemperature {
-    private static let temperatureEvent: Int64 = 15  // kIOHIDEventTypeTemperature
-    private let client = IOHIDEventSystemClientCreateSimpleClient(kCFAllocatorDefault)
-    private var sensors: [IOHIDServiceClient] = []
+    // CPU core keys per Apple Silicon generation, from exelban/stats
+    // Modules/Sensors/values.swift.
+    private static let coreKeys: [String: String] = [
+        "M1": "Tp09 Tp0T Tp01 Tp05 Tp0D Tp0H Tp0L Tp0P Tp0X Tp0b",
+        "M2": "Tp1h Tp1t Tp1p Tp1l Tp01 Tp05 Tp09 Tp0D Tp0X Tp0b Tp0f Tp0j",
+        "M3": "Te05 Te0L Te0P Te0S Tf04 Tf09 Tf0A Tf0B Tf0D Tf0E Tf44 Tf49 Tf4A Tf4B Tf4D Tf4E",
+        "M4": "Te05 Te0S Te09 Te0H Tp01 Tp05 Tp09 Tp0D Tp0V Tp0Y Tp0b Tp0e",
+        "M5":
+            "Tp00 Tp04 Tp08 Tp0C Tp0G Tp0K Tp0O Tp0R Tp0U Tp0X Tp0a Tp0d Tp0g Tp0j Tp0m Tp0p Tp0u Tp0y",
+    ]
+    private static let readKeyInfo: UInt8 = 9
+    private static let readBytes: UInt8 = 5
+
+    private var connection: io_connect_t = 0
+    private var requests: [SMCParam] = []  // prepared once, replayed every read
 
     init() {
-        guard let services = IOHIDEventSystemClientCopyServices(client) as? [IOHIDServiceClient]
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSMC"))
+        defer { IOObjectRelease(service) }
+        guard service != 0, IOServiceOpen(service, mach_task_self_, 0, &connection) == KERN_SUCCESS,
+            let keys = Self.coreKeys[Self.chipGeneration()]
         else { return }
-        var die: [IOHIDServiceClient] = []
-        var device: [IOHIDServiceClient] = []
-        for service in services where IOHIDServiceClientConformsTo(service, 0xff00, 5) != 0 {
-            let name =
-                IOHIDServiceClientCopyProperty(service, "Product" as CFString) as? String ?? ""
-            if name.hasPrefix("PMU tdie") {
-                die.append(service)
-            } else if name.hasPrefix("PMU tdev") {
-                device.append(service)
-            }
+
+        for key in keys.split(separator: " ") {
+            var request = SMCParam()
+            request.key = Self.fourCC(key)
+            request.data8 = Self.readKeyInfo
+            guard let info = call(request)?.keyInfo,
+                info.dataType == Self.fourCC("flt "), info.dataSize == 4
+            else { continue }
+            request.data8 = Self.readBytes
+            request.keyInfo.dataSize = info.dataSize
+            requests.append(request)
         }
-        sensors = die.isEmpty ? device : die
     }
 
     func read() -> Double? {
-        var sum = 0.0
-        var count = 0
-        for sensor in sensors {
-            guard let event = IOHIDServiceClientCopyEvent(sensor, Self.temperatureEvent, 0, 0)
-            else { continue }
-            let value = IOHIDEventGetFloatValue(event, Int32(Self.temperatureEvent << 16))
-            if value > 0 && value < 150 {
-                sum += value
-                count += 1
-            }
-        }
-        return count > 0 ? sum / Double(count) : nil
+        requests.compactMap { request -> Double? in
+            guard let output = call(request) else { return nil }
+            let value = withUnsafeBytes(of: output.bytes) { $0.loadUnaligned(as: Float.self) }
+            return (10...120).contains(value) ? Double(value) : nil  // drop glitched sensors
+        }.max()
+    }
+
+    private func call(_ input: SMCParam) -> SMCParam? {
+        var input = input
+        var output = SMCParam()
+        var size = MemoryLayout<SMCParam>.stride
+        let result = IOConnectCallStructMethod(
+            connection, 2, &input, MemoryLayout<SMCParam>.stride, &output, &size)
+        return result == KERN_SUCCESS && output.result == 0 ? output : nil
+    }
+
+    /// "M3" from "Apple M3 Max".
+    private static func chipGeneration() -> String {
+        var size = 0
+        sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0)
+        var brand = [CChar](repeating: 0, count: size)
+        sysctlbyname("machdep.cpu.brand_string", &brand, &size, nil, 0)
+        let name = String(cString: brand)
+        return name.range(of: #"M\d"#, options: .regularExpression).map { String(name[$0]) } ?? ""
+    }
+
+    private static func fourCC<S: StringProtocol>(_ code: S) -> UInt32 {
+        code.utf8.reduce(0) { $0 << 8 | UInt32($1) }
     }
 }
 
