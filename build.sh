@@ -11,7 +11,7 @@ cp Info.plist "$APP/Contents/"
 
 swiftc -O -swift-version 5 \
   -target "$(uname -m)-apple-macos13.0" \
-  -import-objc-header Sources/Bridge.h \
+  -import-objc-header Sources/SMC.h \
   -framework IOKit \
   Sources/*.swift -o "$APP/Contents/MacOS/MiniMonitor"
 
