@@ -110,7 +110,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Stats' line chart widget is 32pt wide; this one is 20% wider. Height is the
     // menu bar height minus 2pt margins, as in Stats.
     private let graphSize = NSSize(width: 38, height: 18)
-    private let graphGap: CGFloat = 4  // transparent space between temperature and chart
+    private let graphGap: CGFloat = 8  // space between temperature and chart
+    private let font = NSFont.monospacedDigitSystemFont(ofSize: 14, weight: .regular)
     private let historyCount = 60
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -132,9 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
         if let button = statusItem.button {
-            button.font = .monospacedDigitSystemFont(
-                ofSize: NSFont.systemFontSize, weight: .regular)
-            button.imagePosition = .imageRight
+            button.imagePosition = .imageOnly
             button.target = self
             button.action = #selector(clicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -174,21 +173,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if history.count > historyCount { history.removeFirst() }
         }
         guard let button = statusItem.button else { return }
-        let title = temperature.read().map { "\(Int($0.rounded()))°" } ?? "--°"
-        if button.title != title { button.title = title }
-        button.image = graphImage()
+        let text = temperature.read().map { "\(Int($0.rounded()))°" } ?? "--°"
+        button.image = statusImage(text: text)
+        button.setAccessibilityLabel(text)
     }
 
-    private func graphImage() -> NSImage {
+    /// Temperature and chart drawn into one image, so the digits can be centred on
+    /// the chart exactly instead of wherever NSButton puts its title.
+    private func statusImage(text: String) -> NSImage {
         let samples = history
         let slots = historyCount
-        let gap = graphGap
-        let size = NSSize(width: graphGap + graphSize.width, height: graphSize.height)
+        let line = CTLineCreateWithAttributedString(
+            NSAttributedString(string: text, attributes: [.font: font]))
+        let textWidth = ceil(CTLineGetTypographicBounds(line, nil, nil, nil))
+        let capHeight = font.capHeight
+        let chartX = textWidth + graphGap
+        let size = NSSize(width: chartX + graphSize.width, height: graphSize.height)
         let image = NSImage(size: size, flipped: false) { bounds in
-            let rect = NSRect(x: gap, y: 0, width: bounds.width - gap, height: bounds.height)
-            // Same geometry as Stats' LineChart widget in "frame" mode.
             let pixel = 1 / (NSScreen.main?.backingScaleFactor ?? 2)
             let half = pixel / 2
+
+            // Digits centred on the chart, baseline snapped to a device pixel.
+            if let context = NSGraphicsContext.current?.cgContext {
+                let baseline = ((bounds.midY - capHeight / 2) / pixel).rounded() * pixel
+                context.textMatrix = .identity
+                context.textPosition = CGPoint(x: 0, y: baseline)
+                CTLineDraw(line, context)
+            }
+
+            // Same geometry as Stats' LineChart widget in "frame" mode.
+            let rect = NSRect(x: chartX, y: 0, width: bounds.width - chartX, height: bounds.height)
             let frame = NSBezierPath(
                 roundedRect: rect.insetBy(dx: half, dy: half), xRadius: 2, yRadius: 2)
             frame.lineWidth = pixel
@@ -206,14 +220,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         y: plot.minY + (plot.height - half) * min(max(value, 0), 1))
                 }
 
-                let line = NSBezierPath()
-                line.move(to: points[0])
-                points.dropFirst().forEach(line.line(to:))
-                line.lineWidth = pixel
+                let curve = NSBezierPath()
+                curve.move(to: points[0])
+                points.dropFirst().forEach(curve.line(to:))
+                curve.lineWidth = pixel
                 NSColor.black.setStroke()
-                line.stroke()
+                curve.stroke()
 
-                let area = line.copy() as! NSBezierPath
+                let area = curve.copy() as! NSBezierPath
                 area.line(to: NSPoint(x: points[points.count - 1].x, y: plot.minY))
                 area.line(to: NSPoint(x: points[0].x, y: plot.minY))
                 area.close()
