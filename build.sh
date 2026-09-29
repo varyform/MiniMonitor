@@ -8,8 +8,13 @@ swift build -c release
 
 APP=build/MiniMonitor.app
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Info.plist "$APP/Contents/"
+
+# Compiles the Icon Composer icon into Assets.car (plus AppIcon.icns for older macOS).
+xcrun actool Resources/AppIcon.icon --compile "$APP/Contents/Resources" \
+  --platform macosx --minimum-deployment-target 13.0 --app-icon AppIcon \
+  --output-partial-info-plist build/icon-info.plist >/dev/null
 cp "$(swift build -c release --show-bin-path)/MiniMonitor" "$APP/Contents/MacOS/"
 
 codesign --force --sign - "$APP"

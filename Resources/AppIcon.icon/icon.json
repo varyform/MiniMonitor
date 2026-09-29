@@ -1,0 +1,64 @@
+{
+  "color-space-for-untagged-svg-colors": "display-p3",
+  "fill": {
+    "linear-gradient": [
+      "display-p3:0.20000,0.21000,0.25000,1.00000",
+      "display-p3:0.06000,0.06500,0.08000,1.00000"
+    ]
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "glass": false,
+          "hidden": false,
+          "image-name": "line.svg",
+          "name": "line"
+        },
+        {
+          "glass": true,
+          "hidden": false,
+          "image-name": "load.svg",
+          "name": "load",
+          "opacity": 0.9
+        }
+      ],
+      "lighting": "individual",
+      "name": "Chart",
+      "shadow": {
+        "kind": "layer-color",
+        "opacity": 0.5
+      },
+      "specular": true,
+      "translucency": {
+        "enabled": true,
+        "value": 0.2
+      }
+    },
+    {
+      "layers": [
+        {
+          "glass": true,
+          "hidden": false,
+          "image-name": "frame.svg",
+          "name": "frame"
+        }
+      ],
+      "name": "Frame",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.4
+      },
+      "specular": true,
+      "translucency": {
+        "enabled": true,
+        "value": 0.3
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}
