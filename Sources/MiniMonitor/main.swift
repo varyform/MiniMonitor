@@ -232,8 +232,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 area.line(to: NSPoint(x: points[0].x, y: plot.minY))
                 area.close()
                 NSGradient(
-                    starting: NSColor.black.withAlphaComponent(0.25),
-                    ending: NSColor.black.withAlphaComponent(0.5)
+                    starting: NSColor.black.withAlphaComponent(1.0),
+                    ending: NSColor.black.withAlphaComponent(1.0)
                 )?.draw(in: area, angle: 90)
             }
 
