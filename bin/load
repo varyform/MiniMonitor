@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Pegs every core for a while, to watch MiniMonitor's spike marquee ("crazy-load").
+# Usage: bin/load [seconds] [processes]    defaults: 30 s, one process per core
+# Each worker sets an alarm for itself and stops when time is up, so even a killed
+# script leaves nothing burning; Ctrl-C stops them all at once.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+seconds=${1:-30}
+count=${2:-$(sysctl -n hw.ncpu)}
+worker=build/crazy-load
+
+# A busy loop with a deadline. Compiled, so the marquee shows its own name.
+if [ ! -x "$worker" ]; then
+  mkdir -p build
+  xcrun cc -O1 -x c -o "$worker" - <<'C'
+#include <stdlib.h>
+#include <unistd.h>
+int main(int argc, char **argv) {
+    alarm(argc > 1 ? (unsigned)atoi(argv[1]) : 30);
+    for (volatile unsigned long n = 0;; n++) {}
+}
+C
+fi
+
+pids=()
+stop() { [ ${#pids[@]} -eq 0 ] || kill "${pids[@]}" 2>/dev/null || true; }
+trap stop EXIT
+trap 'exit 130' INT TERM
+
+for _ in $(seq "$count"); do
+  "$worker" "$seconds" &
+  pids+=($!)
+done
+echo "Loading $count processes for ${seconds}s (Ctrl-C to stop)"
+wait 2>/dev/null || true
+echo "Done"

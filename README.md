@@ -35,7 +35,7 @@ mise run install   # also copies it to /Applications and launches it
 mise run ci        # format lint, tests and the app build
 ```
 
-`mise tasks` lists the rest (`run`, `test`, `lint`, `format`, `release`).
+`mise tasks` lists the rest (`run`, `test`, `lint`, `format`, `release`, and `load`, which pegs every core for 30 seconds so you can see the spike marquee).
 
 Install to `/Applications` before you turn on **Start at Login**.
 
