@@ -152,20 +152,59 @@ enum Watchdog {
             totals.values.filter { $0.cpu >= minCPU }.sorted { $0.cpu > $1.cpu }.prefix(limit))
     }
 
+    struct Launcher: Equatable {
+        var pid: pid_t
+        var name: String
+    }
+
+    static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "fish", "ksh", "tcsh", "csh"]
+
+    static func isShell(_ name: String) -> Bool {
+        shells.contains(name.hasPrefix("-") ? String(name.dropFirst()) : name)  // "-zsh": login
+    }
+
+    enum LauncherName: Equatable {
+        case name(String)
+        case skip  // a shell wrapping one command (`sh -c …`): look further up
+        case stop  // an interactive shell: you typed it, so there's no launcher to name
+    }
+
+    /// A shell running a script goes by the script's name (`nxplay`, not `bash`).
+    static func launcherName(name: String, arguments: [String]) -> LauncherName {
+        guard isShell(name) else { return .name(name) }
+        var rest = arguments.dropFirst()
+        while let option = rest.first, option.hasPrefix("-") {
+            // -c, or a cluster with it (-lc, -ec): the command is a string, not a script.
+            if !option.hasPrefix("--"), option.dropFirst().contains("c") { return .skip }
+            rest = rest.dropFirst()
+        }
+        guard let script = rest.first else { return .stop }
+        return .name(String(script.split(separator: "/").last ?? Substring(script)))
+    }
+
     /// What started `process`: its nearest ancestor that isn't more of the same (a
-    /// browser's own processes, the app it belongs to). Nil when that's launchd.
-    static func launcher(of process: ProcessSample, in processes: [ProcessSample])
-        -> ProcessSample?
-    {
+    /// browser's own processes, the app it belongs to), named by `launcherName`. Nil
+    /// for launchd and for a command typed into a shell. `arguments` is only asked
+    /// about shells.
+    static func launcher(
+        of process: ProcessSample, in processes: [ProcessSample],
+        arguments: (pid_t) -> [String] = { _ in [] }
+    ) -> Launcher? {
         let byPid = Dictionary(processes.map { ($0.pid, $0) }) { first, _ in first }
         var current = process
         for _ in 0..<64 {
             guard let parent = byPid[current.ppid], parent.pid > 1 else { return nil }
+            current = parent
             let same =
                 parent.name == process.name
                 || (!parent.group.isEmpty && parent.group == process.group)
-            if !same { return parent }
-            current = parent
+            if same { continue }
+            let shell = isShell(parent.name)
+            switch launcherName(name: parent.name, arguments: shell ? arguments(parent.pid) : []) {
+            case .name(let name): return Launcher(pid: parent.pid, name: name)
+            case .skip: continue
+            case .stop: return nil
+            }
         }
         return nil
     }

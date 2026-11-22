@@ -188,7 +188,7 @@ final class ProcessScanner {
         return result == 0 ? usage : nil
     }
 
-    private static func arguments(of pid: pid_t) -> [String] {
+    static func arguments(of pid: pid_t) -> [String] {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return [] }

@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var spikeScanner: ProcessScanner?
     private var spikeProcesses: [ProcessSample] = []
     private var spikeTop: Watchdog.Busy?
+    private var spikeLauncher: Watchdog.Launcher?  // what started spikeTop, if anything
     private var ticksUntilSpikeScan = 0
     private let spikeRescanTicks = 3  // 6 s: each rescan reads every process
     private let marquee = MarqueeView()
@@ -118,6 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             spikeScanner = nil
             spikeProcesses = []
             spikeTop = nil
+            spikeLauncher = nil
             return
         }
         guard let scanner = spikeScanner else {
@@ -134,6 +136,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ticksUntilSpikeScan = spikeRescanTicks
         spikeProcesses = scanner.scan()
         spikeTop = Watchdog.busiest(spikeProcesses, limit: 1).first
+        spikeLauncher = spikeTop.flatMap { launcher(of: $0, in: spikeProcesses) }
+    }
+
+    private func launcher(of busy: Watchdog.Busy, in processes: [ProcessSample])
+        -> Watchdog.Launcher?
+    {
+        Watchdog.launcher(of: busy.top, in: processes, arguments: ProcessScanner.arguments(of:))
+    }
+
+    /// "nxplay › python3.14": the parent first, as the process tree reads.
+    private var spikeName: String {
+        guard let top = spikeTop else { return "" }
+        let app = Watchdog.displayName(forPath: top.group)
+        return spikeLauncher.map { "\($0.name) › \(app)" } ?? app
     }
 
     // MARK: - Watchdog
@@ -198,13 +214,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let (image, chartX) = statusImage(text: text, mark: needsAttention, chart: spikeTop == nil)
         button.image = image
         var label = needsAttention ? "\(text), needs attention" : text
-        if let top = spikeTop {
-            label += ", CPU spike: \(Watchdog.displayName(forPath: top.group))"
-        }
+        if spikeTop != nil { label += ", CPU spike: \(spikeName)" }
         button.setAccessibilityLabel(label)
         button.toolTip = issues.isEmpty ? nil : issues.joined(separator: "\n")
 
-        guard let top = spikeTop else {
+        guard spikeTop != nil else {
             marquee.isHidden = true
             marquee.clear()
             return
@@ -219,16 +233,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 x: origin.x + chartX, y: origin.y, width: graphSize.width, height: graphSize.height
             ).insetBy(dx: 2, dy: 1)
             marquee.isHidden = false
-            marquee.show(Watchdog.displayName(forPath: top.group))
+            marquee.show(spikeName)
         }
     }
 
     /// "870% CPU, started by node (pid 4242)".
-    private func describe(_ busy: Watchdog.Busy, in processes: [ProcessSample]) -> String {
+    private func describe(_ busy: Watchdog.Busy, launcher: Watchdog.Launcher?) -> String {
         var text = "\(percent(busy.cpu)) CPU"
-        if let launcher = Watchdog.launcher(of: busy.top, in: processes) {
-            text += ", started by \(launcher.name) (pid \(launcher.pid))"
-        }
+        if let launcher { text += ", started by \(launcher.name) (pid \(launcher.pid))" }
         return text
     }
 
@@ -237,7 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var lines: [String] = []
         if let top = spikeTop {
             lines.append(
-                "CPU spike: \(Watchdog.displayName(forPath: top.group)), \(describe(top, in: spikeProcesses))"
+                "CPU spike: \(Watchdog.displayName(forPath: top.group)), \(describe(top, launcher: spikeLauncher))"
             )
         }
         let eating = staleBrowsers.filter { browserWatch.alerted[$0.root] != nil }
@@ -360,7 +372,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(disabled("Busiest"))
             for busy in busiest {
                 let name = Watchdog.displayName(forPath: busy.group)
-                let detail = describe(busy, in: processes)
+                let detail = describe(busy, launcher: launcher(of: busy, in: processes))
                 let entry = item(name, action: #selector(showActivityMonitor))
                 entry.toolTip = "\(busy.group)\n\(detail)"
                 if #available(macOS 14.4, *) {

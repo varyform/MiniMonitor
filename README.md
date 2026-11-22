@@ -2,10 +2,10 @@
 
 A tiny macOS menu bar app that shows the CPU temperature and a CPU load graph, and nothing else. I built it to replace iStat Menus for those two readings.
 
-<img src="docs/spike.gif" width="192" alt="The menu bar item during a CPU spike: the load graph gives way to the busiest process's name, crazy-load, scrolling, then comes back">
+<img src="docs/spike.gif" width="172" alt="The menu bar item during a CPU spike: instead of the load graph, nxplay › python3.14 scrolls by, the busy process and the script that started it">
 
 - **Temperature:** the hottest CPU core, read from the SMC. This is the same method as the "Hottest CPU" reading in [Stats](https://github.com/exelban/stats), and it lands close to iStat Menus.
-- **Load graph:** about 2 minutes of total CPU usage. During a big spike (70% of all cores for 4 seconds), the graph turns into a scrolling marquee with the busiest app's name. Hover it to see its CPU and what started it.
+- **Load graph:** about 2 minutes of total CPU usage. During a big spike (70% of all cores for 4 seconds), the graph turns into a scrolling marquee with the busiest app's name and what started it, parent first: `nxplay › python3.14` for a Python build run by the `nxplay` script. A shell running a script goes by the script's name; a command you typed into a terminal shows on its own. Hover it to see its CPU.
 - **Left-click:** opens Activity Monitor.
 - **Right-click:** a menu with **Start at Login** and **Quit**, plus whatever the watchdog found. While anything uses half a core or more, **Busiest** lists the top three apps, each with its CPU and the process that started it (e.g. `node` for a test's headless Chrome).
 - **Watchdog:** tells you when something unusual is using the CPU or GPU (see below).

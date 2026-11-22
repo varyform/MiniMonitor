@@ -310,9 +310,39 @@ struct SpikeTests {
     @Test func launcherSkipsTheAppsOwnProcesses() {
         let renderer = processes.first { $0.pid == 201 }!
         #expect(Watchdog.launcher(of: renderer, in: processes)?.pid == 100)  // node, not chrome
+        // node was typed into an interactive zsh: nothing to name.
         let node = processes.first { $0.pid == 101 }!
-        #expect(Watchdog.launcher(of: node, in: processes)?.name == "zsh")
+        #expect(Watchdog.launcher(of: node, in: processes) == nil)
         let windowServer = processes.first { $0.pid == 300 }!
         #expect(Watchdog.launcher(of: windowServer, in: processes) == nil)  // launchd
+    }
+
+    /// NX Play runs the nxplay script, which runs Python: the marquee names nxplay.
+    @Test func launcherIsTheScriptAShellRuns() {
+        let tree = [
+            ProcessSample(pid: 10, ppid: 1, name: "NX Play"),
+            ProcessSample(pid: 20, ppid: 10, name: "bash"),
+            ProcessSample(pid: 30, ppid: 20, name: "sh"),
+            ProcessSample(pid: 40, ppid: 30, name: "python3.14", cpu: 3, group: "/opt/python3.14"),
+        ]
+        let arguments: [pid_t: [String]] = [
+            20: ["/bin/bash", "/Users/me/nxplay/nxplay", "--rebuild", "/Games/Metroid"],
+            30: ["sh", "-c", "python3.14 build.py"],
+        ]
+        let launcher = Watchdog.launcher(of: tree[3], in: tree) { arguments[$0] ?? [] }
+        #expect(launcher == Watchdog.Launcher(pid: 20, name: "nxplay"))
+    }
+
+    @Test(arguments: [
+        ("bash", ["/bin/bash", "./nxplay", "x"], Watchdog.LauncherName.name("nxplay")),
+        ("zsh", ["/bin/zsh", "-e", "/usr/local/bin/deploy"], .name("deploy")),
+        ("sh", ["sh", "-c", "make"], .skip),
+        ("bash", ["bash", "-lc", "make"], .skip),
+        ("-zsh", ["-zsh"], .stop),
+        ("zsh", ["/bin/zsh", "-l"], .stop),
+        ("node", ["node", "server.js"], .name("node")),
+    ])
+    func launcherNames(name: String, arguments: [String], expected: Watchdog.LauncherName) {
+        #expect(Watchdog.launcherName(name: name, arguments: arguments) == expected)
     }
 }
