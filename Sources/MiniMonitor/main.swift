@@ -34,6 +34,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var staleBrowsers: [StaleBrowser] = []
     private var history: [Double] = []  // oldest first, at most historyCount
     private var timer: Timer?
+    private var lastProcesses: [ProcessSample] = []  // the watchdog's latest scan
+    // During a CPU spike the chart gives way to the busiest app's name. Its own
+    // scanner, so its quick rescans don't upset the watchdog's 30-second deltas.
+    private var spike = SpikeWatch()
+    private var spikeScanner: ProcessScanner?
+    private var spikeProcesses: [ProcessSample] = []
+    private var spikeTop: Watchdog.Busy?
+    private var ticksUntilSpikeScan = 0
+    private let spikeRescanTicks = 3  // 6 s: each rescan reads every process
+    private let marquee = MarqueeView()
 
     private var needsAttention: Bool {
         !browserWatch.alerted.isEmpty || !loadWatch.active.isEmpty
@@ -53,6 +63,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.target = self
             button.action = #selector(clicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            marquee.isHidden = true
+            button.addSubview(marquee)
         }
 
         let workspace = NSWorkspace.shared.notificationCenter
@@ -95,14 +107,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let load = cpu.sample() {
             history.append(load)
             if history.count > historyCount { history.removeFirst() }
+            updateSpike(load)
         }
         redraw()
+    }
+
+    /// The first scan of a spike is only a baseline, so its name shows a tick later.
+    private func updateSpike(_ load: Double) {
+        guard spike.update(load) else {
+            spikeScanner = nil
+            spikeProcesses = []
+            spikeTop = nil
+            return
+        }
+        guard let scanner = spikeScanner else {
+            let scanner = ProcessScanner()
+            scanner.readsGPU = false
+            scanner.readsOtherUsers = self.scanner.readsOtherUsers
+            _ = scanner.scan()
+            spikeScanner = scanner
+            ticksUntilSpikeScan = 1
+            return
+        }
+        ticksUntilSpikeScan -= 1
+        guard ticksUntilSpikeScan <= 0 else { return }
+        ticksUntilSpikeScan = spikeRescanTicks
+        spikeProcesses = scanner.scan()
+        spikeTop = Watchdog.busiest(spikeProcesses, limit: 1).first
     }
 
     // MARK: - Watchdog
 
     @objc private func scan() {
         let processes = scanner.scan()
+        lastProcesses = processes
         staleBrowsers = Watchdog.staleBrowsers(in: processes)
         let browsers = browserWatch.update(staleBrowsers, now: ProcessInfo.processInfo.systemUptime)
         if !browsers.alert.isEmpty {
@@ -157,14 +195,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func redraw() {
         guard let button = statusItem.button else { return }
         let text = temperature.read().map { "\(Int($0.rounded()))°" } ?? "--°"
-        button.image = statusImage(text: text, mark: needsAttention)
-        button.setAccessibilityLabel(needsAttention ? "\(text), needs attention" : text)
+        let (image, chartX) = statusImage(text: text, mark: needsAttention, chart: spikeTop == nil)
+        button.image = image
+        var label = needsAttention ? "\(text), needs attention" : text
+        if let top = spikeTop {
+            label += ", CPU spike: \(Watchdog.displayName(forPath: top.group))"
+        }
+        button.setAccessibilityLabel(label)
         button.toolTip = issues.isEmpty ? nil : issues.joined(separator: "\n")
+
+        guard let top = spikeTop else {
+            marquee.isHidden = true
+            marquee.clear()
+            return
+        }
+        // Inside the chart's frame. The image sits centred in the button; position
+        // once the button has taken the image's width.
+        DispatchQueue.main.async { [self] in
+            let origin = NSPoint(
+                x: ((button.bounds.width - image.size.width) / 2).rounded(),
+                y: ((button.bounds.height - image.size.height) / 2).rounded())
+            marquee.frame = NSRect(
+                x: origin.x + chartX, y: origin.y, width: graphSize.width, height: graphSize.height
+            ).insetBy(dx: 2, dy: 1)
+            marquee.isHidden = false
+            marquee.show(Watchdog.displayName(forPath: top.group))
+        }
+    }
+
+    /// "870% CPU, started by node (pid 4242)".
+    private func describe(_ busy: Watchdog.Busy, in processes: [ProcessSample]) -> String {
+        var text = "\(percent(busy.cpu)) CPU"
+        if let launcher = Watchdog.launcher(of: busy.top, in: processes) {
+            text += ", started by \(launcher.name) (pid \(launcher.pid))"
+        }
+        return text
     }
 
     /// One line per thing worth knowing about, for the tooltip.
     private var issues: [String] {
         var lines: [String] = []
+        if let top = spikeTop {
+            lines.append(
+                "CPU spike: \(Watchdog.displayName(forPath: top.group)), \(describe(top, in: spikeProcesses))"
+            )
+        }
         let eating = staleBrowsers.filter { browserWatch.alerted[$0.root] != nil }
         if !eating.isEmpty {
             lines.append(
@@ -185,7 +260,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Temperature and chart drawn into one image, so the digits can be centred on
     /// the chart exactly instead of wherever NSButton puts its title.
-    private func statusImage(text: String, mark: Bool) -> NSImage {
+    /// - Returns: the image, and where its chart frame starts.
+    private func statusImage(text: String, mark: Bool, chart: Bool) -> (NSImage, CGFloat) {
         let samples = history
         let slots = historyCount
         let line = CTLineCreateWithAttributedString(
@@ -224,7 +300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 roundedRect: rect.insetBy(dx: half, dy: half), xRadius: 2, yRadius: 2)
             frame.lineWidth = pixel
 
-            if samples.count > 1 {
+            if chart, samples.count > 1 {
                 let plot = NSRect(
                     x: frame.bounds.minX + half + pixel, y: half,
                     width: frame.bounds.width - 2 * half - pixel,
@@ -258,7 +334,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         }
         image.isTemplate = true  // follows menu bar light/dark and highlight
-        return image
+        return (image, chartX)
     }
 
     @objc private func clicked(_ sender: NSStatusBarButton) {
@@ -275,6 +351,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func rebuildMenu() {
         menu.removeAllItems()
+
+        // What's using the CPU and what started it: the spike's quick scan while
+        // there is one, else the watchdog's last 30 seconds.
+        let processes = spikeTop == nil ? lastProcesses : spikeProcesses
+        let busiest = Watchdog.busiest(processes, minCPU: 0.5)
+        if !busiest.isEmpty {
+            menu.addItem(disabled("Busiest"))
+            for busy in busiest {
+                let name = Watchdog.displayName(forPath: busy.group)
+                let detail = describe(busy, in: processes)
+                let entry = item(name, action: #selector(showActivityMonitor))
+                entry.toolTip = "\(busy.group)\n\(detail)"
+                if #available(macOS 14.4, *) {
+                    entry.subtitle = detail
+                } else {
+                    entry.title = "\(name): \(detail)"
+                }
+                menu.addItem(entry)
+            }
+            menu.addItem(.separator())
+        }
 
         if !staleBrowsers.isEmpty {
             let cpu = staleBrowsers.reduce(0) { $0 + $1.cpu }

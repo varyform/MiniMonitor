@@ -131,6 +131,45 @@ enum Watchdog {
         return formatter
     }()
 
+    /// An app (or executable) and the CPU it uses, its helpers summed.
+    struct Busy: Equatable {
+        var group: String
+        var cpu: Double  // cores
+        var top: ProcessSample  // its busiest process
+    }
+
+    static func busiest(_ processes: [ProcessSample], limit: Int = 3, minCPU: Double = 0)
+        -> [Busy]
+    {
+        var totals: [String: Busy] = [:]
+        for process in processes where !process.group.isEmpty && process.cpu > 0 {
+            var busy = totals[process.group] ?? Busy(group: process.group, cpu: 0, top: process)
+            busy.cpu += process.cpu
+            if process.cpu > busy.top.cpu { busy.top = process }
+            totals[process.group] = busy
+        }
+        return Array(
+            totals.values.filter { $0.cpu >= minCPU }.sorted { $0.cpu > $1.cpu }.prefix(limit))
+    }
+
+    /// What started `process`: its nearest ancestor that isn't more of the same (a
+    /// browser's own processes, the app it belongs to). Nil when that's launchd.
+    static func launcher(of process: ProcessSample, in processes: [ProcessSample])
+        -> ProcessSample?
+    {
+        let byPid = Dictionary(processes.map { ($0.pid, $0) }) { first, _ in first }
+        var current = process
+        for _ in 0..<64 {
+            guard let parent = byPid[current.ppid], parent.pid > 1 else { return nil }
+            let same =
+                parent.name == process.name
+                || (!parent.group.isEmpty && parent.group == process.group)
+            if !same { return parent }
+            current = parent
+        }
+        return nil
+    }
+
     /// "Google Chrome" for an app's executable, else the executable's name.
     static func displayName(forPath path: String) -> String {
         let components = path.split(separator: "/")
@@ -138,6 +177,27 @@ enum Watchdog {
             return String(app.dropLast(4))
         }
         return components.last.map(String.init) ?? path
+    }
+}
+
+/// A big CPU spike: total load high for a couple of samples, over once it has been
+/// well below for as long, so the marquee doesn't flicker on and off at the edge.
+struct SpikeWatch {
+    var on = 0.7  // share of all cores
+    var off = 0.5
+    var sustain = 2  // samples: 4 s at one every 2 s
+
+    private(set) var isSpiking = false
+    private var streak = 0
+
+    mutating func update(_ load: Double) -> Bool {
+        let crossing = isSpiking ? load < off : load >= on
+        streak = crossing ? streak + 1 : 0
+        if streak >= sustain {
+            isSpiking.toggle()
+            streak = 0
+        }
+        return isSpiking
     }
 }
 

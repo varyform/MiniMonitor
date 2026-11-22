@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Spike marquee:** during a big CPU spike, the graph gives way to the busiest app's name, scrolling. Hover it for its CPU and what started it, such as the `node` behind a test's headless Chrome.
+- **Busiest in the menu:** while anything uses half a core or more, the right-click menu lists the top three apps with their CPU and the process that started each. Choose one to open Activity Monitor.
+
 ## 0.3 — 2026-11-22
 
 - **System daemons too:** processes run by root and other users, such as Spotlight's or Time Machine's, are watched as well, read through the system's own `ps`. Turn it off with Watch System Daemons in the right-click menu.

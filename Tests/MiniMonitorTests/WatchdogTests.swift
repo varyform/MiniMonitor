@@ -242,3 +242,77 @@ struct ProcessHelperTests {
         #expect(processes.allSatisfy { $0.cpu == 0 })  // no deltas on the first scan
     }
 }
+
+struct SpikeTests {
+    @Test func startsAndEndsOnlyAfterHoldingForTwoSamples() {
+        var spike = SpikeWatch()
+        // One high sample is noise; between the limits a spike carries on.
+        let loads = [0.9, 0.3, 0.8, 0.75, 0.6, 0.4, 0.45]
+        let states = loads.map { spike.update($0) }
+        #expect(states == [false, false, false, true, true, true, false])
+    }
+
+    /// The case from Activity Monitor: a test's headless Chrome at 870% under node.
+    private let processes = [
+        ProcessSample(pid: 100, ppid: 50, name: "node", cpu: 0.99, group: "/opt/node/bin/node"),
+        ProcessSample(pid: 101, ppid: 50, name: "node", cpu: 0.98, group: "/opt/node/bin/node"),
+        ProcessSample(pid: 50, ppid: 40, name: "zsh", cpu: 0.02, group: "/bin/zsh"),
+        ProcessSample(pid: 40, ppid: 1, name: "Rex"),
+        ProcessSample(
+            pid: 200, ppid: 100, name: "chrome-headless-", cpu: 0.5,
+            group: "/x/chrome-headless-shell"
+        ),
+        ProcessSample(
+            pid: 201, ppid: 200, name: "chrome-headless-", cpu: 8.2,
+            group: "/x/chrome-headless-shell"
+        ),
+        ProcessSample(pid: 300, ppid: 1, name: "WindowServer", cpu: 0.66, group: "/w/WindowServer"),
+        ProcessSample(pid: 301, ppid: 1, name: "idle", group: ""),
+    ]
+
+    @Test func busiestSumsAnAppsProcesses() {
+        let busiest = Watchdog.busiest(processes, minCPU: 0.5)
+        #expect(
+            busiest.map(\.group) == [
+                "/x/chrome-headless-shell", "/opt/node/bin/node", "/w/WindowServer",
+            ])
+        #expect(abs(busiest[0].cpu - 8.7) < 1e-9)
+        #expect(busiest[0].top.pid == 201)
+        #expect(Watchdog.busiest(processes, limit: 1).count == 1)
+    }
+
+    /// A real busy process, as a spike would see it.
+    @Test func spikeScanNamesABusyProcess() throws {
+        let busy = Process()
+        busy.executableURL = URL(fileURLWithPath: "/usr/bin/yes")
+        busy.standardOutput = FileHandle.nullDevice
+        try busy.run()
+        defer {
+            busy.terminate()
+            busy.waitUntilExit()
+        }
+        let scanner = ProcessScanner()
+        scanner.readsGPU = false
+        _ = scanner.scan()
+        Thread.sleep(forTimeInterval: 1)
+        let processes = scanner.scan()
+        // Whatever else the Mac is busy with may rank higher; find ours.
+        let entry = Watchdog.busiest(processes, limit: .max).first {
+            $0.top.pid == busy.processIdentifier
+        }
+        let found = try #require(entry)
+        #expect(Watchdog.displayName(forPath: found.group) == "yes")
+        #expect(found.cpu > 0.5)
+        // Started by this test process, which the scanner leaves out of its own scans.
+        #expect(found.top.ppid == getpid())
+    }
+
+    @Test func launcherSkipsTheAppsOwnProcesses() {
+        let renderer = processes.first { $0.pid == 201 }!
+        #expect(Watchdog.launcher(of: renderer, in: processes)?.pid == 100)  // node, not chrome
+        let node = processes.first { $0.pid == 101 }!
+        #expect(Watchdog.launcher(of: node, in: processes)?.name == "zsh")
+        let windowServer = processes.first { $0.pid == 300 }!
+        #expect(Watchdog.launcher(of: windowServer, in: processes) == nil)  // launchd
+    }
+}

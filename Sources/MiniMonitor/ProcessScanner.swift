@@ -13,6 +13,7 @@ private func responsiblePid(_ pid: pid_t) -> pid_t
 /// from /bin/ps, which is setuid root.
 final class ProcessScanner {
     var readsOtherUsers = true
+    var readsGPU = true
     private let ownPid = getpid()
     private let secondsPerTick: Double
     private var previous: [pid_t: (start: UInt64, cpu: UInt64, gpu: UInt64)] = [:]
@@ -36,7 +37,7 @@ final class ProcessScanner {
         let interval = lastScan.map { now - $0 } ?? 0
         lastScan = now
 
-        let gpuTimes = Self.gpuTimes()
+        let gpuTimes = readsGPU ? Self.gpuTimes() : [:]
         var count = listPids()
         if count >= pids.count {
             pids = .init(repeating: 0, count: count * 2)
