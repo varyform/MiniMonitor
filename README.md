@@ -5,9 +5,18 @@ A tiny macOS menu bar app that shows the CPU temperature and a CPU load graph, a
 - **Temperature:** the hottest CPU core, read from the SMC. This is the same method as the "Hottest CPU" reading in [Stats](https://github.com/exelban/stats), and it lands close to iStat Menus.
 - **Load graph:** about 2 minutes of total CPU usage.
 - **Left-click:** opens Activity Monitor.
-- **Right-click:** a menu with **Start at Login** and **Quit**.
+- **Right-click:** a menu with **Start at Login** and **Quit**, plus whatever the watchdog found.
+- **Watchdog:** tells you when something unusual is using the CPU or GPU (see below).
 
 It updates every 2 seconds and pauses while the display sleeps. It uses about 0.1–0.2% CPU and about 15 MB of memory.
+
+## Watchdog
+
+- **Stale test browsers:** headless Chrome or chromedriver that a killed test run left behind. These are orphans adopted by launchd that carry Chrome's automation flag, the same test the projects' own sweeps use. When one keeps using CPU, you get a notification at once, whatever you're doing. MiniMonitor quits it 2 minutes later unless you click **Quit Now** first. The right-click menu lists every stale browser, idle ones too, with **Quit Stale Browsers**.
+- **Unusual load:** an app, with its helpers counted together, that averages more than one core of CPU or half the GPU for 5 minutes while you've been away from the keyboard and mouse for 5 minutes. Processes started in the last 15 minutes don't count, since that's you at work, and nothing is raised while something keeps the display awake, such as a video or a call. Each alert has **Ignore This App**, and **Ignored Apps** in the menu undoes it.
+- While either is going on, a dot shows left of the temperature. The tooltip and the right-click menu say what it is.
+
+It scans processes every 30 seconds, also while the display sleeps, which adds about 0.1% CPU. Daemons running as root can't be read without root, so they aren't watched.
 
 ## Requirements
 

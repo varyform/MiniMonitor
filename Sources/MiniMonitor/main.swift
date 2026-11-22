@@ -1,114 +1,5 @@
 import AppKit
-import IOKit
-import SMC
 import ServiceManagement
-
-// MARK: - Sensors
-
-/// Aggregate CPU usage from Mach tick counters (one cheap syscall per sample).
-final class CPULoad {
-    private let host = mach_host_self()
-    private var previous: host_cpu_load_info?
-
-    /// Busy fraction 0...1 since the previous call; nil on the first call.
-    func sample() -> Double? {
-        var info = host_cpu_load_info()
-        var count = mach_msg_type_number_t(
-            MemoryLayout<host_cpu_load_info>.size / MemoryLayout<integer_t>.size)
-        let result = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics(host, HOST_CPU_LOAD_INFO, $0, &count)
-            }
-        }
-        guard result == KERN_SUCCESS else { return nil }
-        defer { previous = info }
-        guard let old = previous else { return nil }
-
-        let now = info.cpu_ticks
-        let then = old.cpu_ticks  // (user, system, idle, nice)
-        let busy = Double((now.0 &- then.0) &+ (now.1 &- then.1) &+ (now.3 &- then.3))
-        let idle = Double(now.2 &- then.2)
-        return busy + idle > 0 ? busy / (busy + idle) : 0
-    }
-}
-
-/// "Hottest CPU" as Stats computes it (and close to iStat Menus): the highest
-/// per-core SMC temperature. The PMU die sensors read ~10° cooler than both.
-final class CPUTemperature {
-    // CPU core keys per Apple Silicon generation, from exelban/stats
-    // Modules/Sensors/values.swift.
-    static let coreKeys: [String: String] = [
-        "M1": "Tp09 Tp0T Tp01 Tp05 Tp0D Tp0H Tp0L Tp0P Tp0X Tp0b",
-        "M2": "Tp1h Tp1t Tp1p Tp1l Tp01 Tp05 Tp09 Tp0D Tp0X Tp0b Tp0f Tp0j",
-        "M3": "Te05 Te0L Te0P Te0S Tf04 Tf09 Tf0A Tf0B Tf0D Tf0E Tf44 Tf49 Tf4A Tf4B Tf4D Tf4E",
-        "M4": "Te05 Te0S Te09 Te0H Tp01 Tp05 Tp09 Tp0D Tp0V Tp0Y Tp0b Tp0e",
-        "M5":
-            "Tp00 Tp04 Tp08 Tp0C Tp0G Tp0K Tp0O Tp0R Tp0U Tp0X Tp0a Tp0d Tp0g Tp0j Tp0m Tp0p Tp0u Tp0y",
-    ]
-    private static let readKeyInfo: UInt8 = 9
-    private static let readBytes: UInt8 = 5
-
-    private var connection: io_connect_t = 0
-    private var requests: [SMCParam] = []  // prepared once, replayed every read
-
-    init() {
-        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSMC"))
-        defer { IOObjectRelease(service) }
-        guard service != 0, IOServiceOpen(service, mach_task_self_, 0, &connection) == KERN_SUCCESS,
-            let keys = Self.coreKeys[Self.chipGeneration()]
-        else { return }
-
-        for key in keys.split(separator: " ") {
-            var request = SMCParam()
-            request.key = Self.fourCC(key)
-            request.data8 = Self.readKeyInfo
-            guard let info = call(request)?.keyInfo,
-                info.dataType == Self.fourCC("flt "), info.dataSize == 4
-            else { continue }
-            request.data8 = Self.readBytes
-            request.keyInfo.dataSize = info.dataSize
-            requests.append(request)
-        }
-    }
-
-    func read() -> Double? {
-        requests.compactMap { request -> Double? in
-            guard let output = call(request) else { return nil }
-            let value = withUnsafeBytes(of: output.bytes) { $0.loadUnaligned(as: Float.self) }
-            return (10...120).contains(value) ? Double(value) : nil  // drop glitched sensors
-        }.max()
-    }
-
-    private func call(_ input: SMCParam) -> SMCParam? {
-        var input = input
-        var output = SMCParam()
-        var size = MemoryLayout<SMCParam>.stride
-        let result = IOConnectCallStructMethod(
-            connection, 2, &input, MemoryLayout<SMCParam>.stride, &output, &size)
-        return result == KERN_SUCCESS && output.result == 0 ? output : nil
-    }
-
-    private static func chipGeneration() -> String {
-        var size = 0
-        guard sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0) == 0, size > 0
-        else { return "" }
-        var brand = [CChar](repeating: 0, count: size)
-        guard sysctlbyname("machdep.cpu.brand_string", &brand, &size, nil, 0) == 0
-        else { return "" }
-        return generation(fromBrand: String(cString: brand))
-    }
-
-    /// "M3" from "Apple M3 Max"; "" for Intel.
-    static func generation(fromBrand name: String) -> String {
-        name.range(of: #"M\d"#, options: .regularExpression).map { String(name[$0]) } ?? ""
-    }
-
-    static func fourCC<S: StringProtocol>(_ code: S) -> UInt32 {
-        code.utf8.reduce(0) { $0 << 8 | UInt32($1) }
-    }
-}
-
-// MARK: - App
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let interval: TimeInterval = 2
@@ -116,8 +7,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // menu bar height minus 2pt margins, as in Stats.
     private let graphSize = NSSize(width: 38, height: 18)
     private let graphGap: CGFloat = 8  // space between temperature and chart
+    private let markSize: CGFloat = 5  // the dot that says something needs a look
+    private let markGap: CGFloat = 3
     private let font = NSFont.monospacedDigitSystemFont(ofSize: 14, weight: .regular)
     private let historyCount = 60
+    // Process scans keep running while the screen sleeps: that's when stale browsers
+    // and runaway apps go unnoticed.
+    // Every 30 s: a scan reads ~2,000 processes one syscall each (~30 ms).
+    private let scanInterval: TimeInterval = 30
+    private static let ignoredKey = "ignoredApps"
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
@@ -125,16 +23,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         title: "Start at Login", action: #selector(toggleLogin), keyEquivalent: "")
     private let cpu = CPULoad()
     private let temperature = CPUTemperature()
+    private let scanner = ProcessScanner()
+    private let alerts = Alerts()
+    private var browserWatch = BrowserWatch()
+    private var loadWatch = LoadWatch(
+        ignored: Set(UserDefaults.standard.stringArray(forKey: AppDelegate.ignoredKey) ?? []))
+    private var staleBrowsers: [StaleBrowser] = []
     private var history: [Double] = []  // oldest first, at most historyCount
     private var timer: Timer?
 
+    private var needsAttention: Bool {
+        !browserWatch.alerted.isEmpty || !loadWatch.active.isEmpty
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         loginItem.target = self
-        menu.addItem(loginItem)
-        menu.addItem(.separator())
-        menu.addItem(
-            NSMenuItem(
-                title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        alerts.onQuitBrowsers = { [weak self] in self?.quitStaleBrowsers() }
+        alerts.onIgnore = { [weak self] group in self?.ignore(group) }
+        alerts.onShow = { [weak self] in self?.openActivityMonitor() }
 
         if let button = statusItem.button {
             button.imagePosition = .imageOnly
@@ -152,6 +58,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil)
 
         start()
+        _ = scanner.scan()  // baseline for the first deltas
+        let scans = Timer(
+            timeInterval: scanInterval, target: self, selector: #selector(scan), userInfo: nil,
+            repeats: true)
+        scans.tolerance = scanInterval / 5
+        RunLoop.main.add(scans, forMode: .common)
     }
 
     /// Redraws at once instead of a tick later. Re-primes the load baseline so the
@@ -181,23 +93,101 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         redraw()
     }
 
+    // MARK: - Watchdog
+
+    @objc private func scan() {
+        let processes = scanner.scan()
+        staleBrowsers = Watchdog.staleBrowsers(in: processes)
+        let browsers = browserWatch.update(staleBrowsers, now: ProcessInfo.processInfo.systemUptime)
+        if !browsers.alert.isEmpty {
+            alerts.staleBrowsers(browsers.alert, quitIn: browserWatch.quitDelay)
+        }
+        if !browsers.quit.isEmpty { quit(browsers.quit, notify: true) }
+
+        // Stale browsers have their own alert; don't count them twice.
+        let stale = Set(staleBrowsers.flatMap { $0.processes.map(\.pid) })
+        for episode in loadWatch.update(processes, idle: Presence.idle, excluding: stale) {
+            alerts.unusualLoad(episode, app: Watchdog.displayName(forPath: episode.group))
+        }
+        if timer != nil { redraw() }
+    }
+
+    @objc private func quitStaleBrowsers() {
+        quit(staleBrowsers, notify: false)
+    }
+
+    private func quit(_ browsers: [StaleBrowser], notify: Bool) {
+        Reaper.quit(browsers.flatMap(\.processes))
+        let roots = Set(browsers.map(\.root))
+        staleBrowsers.removeAll { roots.contains($0.root) }
+        browserWatch.forget(roots)
+        if notify { alerts.quitBrowsers(browsers.count) }
+        redraw()
+    }
+
+    private func ignore(_ group: String) {
+        loadWatch.ignore(group)
+        alerts.clearLoad(group)
+        saveIgnored()
+        redraw()
+    }
+
+    @objc private func ignoreItem(_ sender: NSMenuItem) {
+        if let group = sender.representedObject as? String { ignore(group) }
+    }
+
+    @objc private func unignoreItem(_ sender: NSMenuItem) {
+        guard let group = sender.representedObject as? String else { return }
+        loadWatch.unignore(group)
+        saveIgnored()
+    }
+
+    private func saveIgnored() {
+        UserDefaults.standard.set(loadWatch.ignored.sorted(), forKey: Self.ignoredKey)
+    }
+
+    // MARK: - Status item
+
     private func redraw() {
         guard let button = statusItem.button else { return }
         let text = temperature.read().map { "\(Int($0.rounded()))°" } ?? "--°"
-        button.image = statusImage(text: text)
-        button.setAccessibilityLabel(text)
+        button.image = statusImage(text: text, mark: needsAttention)
+        button.setAccessibilityLabel(needsAttention ? "\(text), needs attention" : text)
+        button.toolTip = issues.isEmpty ? nil : issues.joined(separator: "\n")
+    }
+
+    /// One line per thing worth knowing about, for the tooltip.
+    private var issues: [String] {
+        var lines: [String] = []
+        let eating = staleBrowsers.filter { browserWatch.alerted[$0.root] != nil }
+        if !eating.isEmpty {
+            lines.append(
+                "Stale test browsers: \(eating.count), \(percent(eating.reduce(0) { $0 + $1.cpu })) CPU"
+            )
+        }
+        for episode in loadWatch.active.values.sorted(by: { $0.cpu > $1.cpu }) {
+            lines.append("\(Watchdog.displayName(forPath: episode.group)): \(usage(of: episode))")
+        }
+        return lines
+    }
+
+    private func usage(of episode: LoadWatch.Episode) -> String {
+        var parts = ["\(percent(episode.cpu)) CPU"]
+        if episode.gpu >= 0.05 { parts.append("\(percent(episode.gpu)) GPU") }
+        return parts.joined(separator: ", ")
     }
 
     /// Temperature and chart drawn into one image, so the digits can be centred on
     /// the chart exactly instead of wherever NSButton puts its title.
-    private func statusImage(text: String) -> NSImage {
+    private func statusImage(text: String, mark: Bool) -> NSImage {
         let samples = history
         let slots = historyCount
         let line = CTLineCreateWithAttributedString(
             NSAttributedString(string: text, attributes: [.font: font]))
+        let textX = mark ? markSize + markGap : 0
         let textWidth = ceil(CTLineGetTypographicBounds(line, nil, nil, nil))
         let capHeight = font.capHeight
-        let chartX = textWidth + graphGap
+        let chartX = textX + textWidth + graphGap
         let size = NSSize(width: chartX + graphSize.width, height: graphSize.height)
         let image = NSImage(size: size, flipped: false) { bounds in
             guard let context = NSGraphicsContext.current?.cgContext else { return false }
@@ -207,10 +197,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let pixel = 1 / (scale > 0 ? scale : 2)
             let half = pixel / 2
 
+            if mark {
+                NSColor.black.setFill()
+                NSBezierPath(
+                    ovalIn: NSRect(
+                        x: 0, y: bounds.midY - self.markSize / 2, width: self.markSize,
+                        height: self.markSize)
+                ).fill()
+            }
+
             // Digits centred on the chart, baseline snapped to a device pixel.
             let baseline = ((bounds.midY - capHeight / 2) / pixel).rounded() * pixel
             context.textMatrix = .identity
-            context.textPosition = CGPoint(x: 0, y: baseline)
+            context.textPosition = CGPoint(x: textX, y: baseline)
             CTLineDraw(line, context)
 
             // Same geometry as Stats' LineChart widget in "frame" mode.
@@ -259,13 +258,83 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func clicked(_ sender: NSStatusBarButton) {
         let event = NSApp.currentEvent
         if event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true {
-            loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+            rebuildMenu()
             statusItem.menu = menu
             sender.performClick(nil)  // pops the menu; returns when it closes
             statusItem.menu = nil
         } else {
             openActivityMonitor()
         }
+    }
+
+    private func rebuildMenu() {
+        menu.removeAllItems()
+
+        if !staleBrowsers.isEmpty {
+            let cpu = staleBrowsers.reduce(0) { $0 + $1.cpu }
+            let processes = staleBrowsers.reduce(0) { $0 + $1.processes.count }
+            let title =
+                staleBrowsers.count == 1
+                ? "1 stale test browser" : "\(staleBrowsers.count) stale test browsers"
+            menu.addItem(disabled("\(title): \(processes) processes, \(percent(cpu)) CPU"))
+            menu.addItem(
+                item("Quit Stale Browsers", action: #selector(quitStaleBrowsers)))
+            menu.addItem(.separator())
+        }
+
+        let episodes = loadWatch.active.values.sorted { $0.cpu > $1.cpu }
+        for episode in episodes {
+            let name = Watchdog.displayName(forPath: episode.group)
+            let entry = NSMenuItem(
+                title: "\(name) is busy: \(usage(of: episode))", action: nil, keyEquivalent: "")
+            let submenu = NSMenu()
+            submenu.addItem(
+                item("Show in Activity Monitor", action: #selector(showActivityMonitor)))
+            let ignore = item("Ignore \(name)", action: #selector(ignoreItem))
+            ignore.representedObject = episode.group
+            submenu.addItem(ignore)
+            entry.submenu = submenu
+            menu.addItem(entry)
+        }
+        if !episodes.isEmpty { menu.addItem(.separator()) }
+
+        if !loadWatch.ignored.isEmpty {
+            let entry = NSMenuItem(title: "Ignored Apps", action: nil, keyEquivalent: "")
+            let submenu = NSMenu()
+            submenu.addItem(disabled("Choose one to watch it again"))
+            for group in loadWatch.ignored.sorted() {
+                let app = item(
+                    Watchdog.displayName(forPath: group), action: #selector(unignoreItem))
+                app.representedObject = group
+                app.toolTip = group
+                submenu.addItem(app)
+            }
+            entry.submenu = submenu
+            menu.addItem(entry)
+        }
+
+        loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(loginItem)
+        menu.addItem(.separator())
+        menu.addItem(
+            NSMenuItem(
+                title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+    }
+
+    private func item(_ title: String, action: Selector) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        return item
+    }
+
+    private func disabled(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+
+    @objc private func showActivityMonitor() {
+        openActivityMonitor()
     }
 
     private func openActivityMonitor() {
