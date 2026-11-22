@@ -1,8 +1,7 @@
-#!/bin/sh
-# Usage: ./build.sh            build build/MiniMonitor.app
-#        ./build.sh install    also copy to /Applications and launch
-set -e
-cd "$(dirname "$0")"
+#!/usr/bin/env bash
+# Builds build/MiniMonitor.app (release, ad-hoc signed).
+set -euo pipefail
+cd "$(dirname "$0")/.."
 
 swift build -c release
 
@@ -19,11 +18,3 @@ cp "$(swift build -c release --show-bin-path)/MiniMonitor" "$APP/Contents/MacOS/
 
 codesign --force --sign - "$APP"
 echo "Built $APP"
-
-if [ "$1" = "install" ]; then
-  pkill -x MiniMonitor 2>/dev/null || true
-  rm -rf /Applications/MiniMonitor.app
-  cp -R "$APP" /Applications/
-  open /Applications/MiniMonitor.app
-  echo "Installed /Applications/MiniMonitor.app"
-fi

@@ -8,5 +8,6 @@ let package = Package(
         // Header-only C module: SwiftPM needs no sources for a system library target.
         .systemLibrary(name: "SMC"),
         .executableTarget(name: "MiniMonitor", dependencies: ["SMC"]),
+        .testTarget(name: "MiniMonitorTests", dependencies: ["MiniMonitor"]),
     ]
 )

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Full local check: format lint, tests, app bundle build.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+echo "== swift format lint"
+mise run lint
+echo "== tests"
+mise run test
+echo "== app bundle"
+mise run build

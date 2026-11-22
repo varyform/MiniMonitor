@@ -37,7 +37,7 @@ final class CPULoad {
 final class CPUTemperature {
     // CPU core keys per Apple Silicon generation, from exelban/stats
     // Modules/Sensors/values.swift.
-    private static let coreKeys: [String: String] = [
+    static let coreKeys: [String: String] = [
         "M1": "Tp09 Tp0T Tp01 Tp05 Tp0D Tp0H Tp0L Tp0P Tp0X Tp0b",
         "M2": "Tp1h Tp1t Tp1p Tp1l Tp01 Tp05 Tp09 Tp0D Tp0X Tp0b Tp0f Tp0j",
         "M3": "Te05 Te0L Te0P Te0S Tf04 Tf09 Tf0A Tf0B Tf0D Tf0E Tf44 Tf49 Tf4A Tf4B Tf4D Tf4E",
@@ -88,18 +88,22 @@ final class CPUTemperature {
         return result == KERN_SUCCESS && output.result == 0 ? output : nil
     }
 
-    /// "M3" from "Apple M3 Max".
     private static func chipGeneration() -> String {
         var size = 0
         guard sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0) == 0, size > 0
         else { return "" }
         var brand = [CChar](repeating: 0, count: size)
-        guard sysctlbyname("machdep.cpu.brand_string", &brand, &size, nil, 0) == 0 else { return "" }
-        let name = String(cString: brand)
-        return name.range(of: #"M\d"#, options: .regularExpression).map { String(name[$0]) } ?? ""
+        guard sysctlbyname("machdep.cpu.brand_string", &brand, &size, nil, 0) == 0
+        else { return "" }
+        return generation(fromBrand: String(cString: brand))
     }
 
-    private static func fourCC<S: StringProtocol>(_ code: S) -> UInt32 {
+    /// "M3" from "Apple M3 Max"; "" for Intel.
+    static func generation(fromBrand name: String) -> String {
+        name.range(of: #"M\d"#, options: .regularExpression).map { String(name[$0]) } ?? ""
+    }
+
+    static func fourCC<S: StringProtocol>(_ code: S) -> UInt32 {
         code.utf8.reduce(0) { $0 << 8 | UInt32($1) }
     }
 }
@@ -221,7 +225,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     width: frame.bounds.width - 2 * half - pixel,
                     height: frame.bounds.height - half)
                 let step = plot.width / CGFloat(slots - 1)
-                let firstX = plot.minX + CGFloat(slots - samples.count) * step  // newest on the right
+                // Newest sample on the right.
+                let firstX = plot.minX + CGFloat(slots - samples.count) * step
                 let points = samples.enumerated().map { index, value in
                     NSPoint(
                         x: firstX + CGFloat(index) * step,

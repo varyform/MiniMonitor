@@ -1,0 +1,34 @@
+[tools]
+swift = "6.4.2"
+
+[vars]
+sources = "Package.swift Sources Tests"
+
+[tasks.ci]
+description = "Format lint, tests, app bundle build"
+run = "bin/ci"
+
+[tasks.build]
+description = "Build build/MiniMonitor.app (release, ad-hoc signed)"
+run = "bin/build"
+
+[tasks.run]
+description = "Build and launch build/MiniMonitor.app, replacing the running copy"
+depends = ["build"]
+run = "pkill -x MiniMonitor || true; open build/MiniMonitor.app"
+
+[tasks.install]
+description = "Build, install to /Applications and launch, replacing the running copy"
+run = "bin/install"
+
+[tasks.test]
+description = "Run the unit tests"
+run = "swift test"
+
+[tasks.lint]
+description = "Check formatting (swift format)"
+run = "swift format lint --strict --recursive {{vars.sources}}"
+
+[tasks.format]
+description = "Format the sources in place (swift format)"
+run = "swift format format --in-place --recursive {{vars.sources}}"

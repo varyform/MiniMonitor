@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Builds MiniMonitor.app, installs it to /Applications and launches it,
+# replacing the running copy. Start at Login points at this install.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+TARGET=/Applications/MiniMonitor.app
+STAGED=/Applications/.MiniMonitor.app.installing
+
+bin/build
+# Copying first means a failed copy can't cost you the working install.
+rm -rf "$STAGED"
+ditto build/MiniMonitor.app "$STAGED"
+pkill -x MiniMonitor 2>/dev/null || true
+rm -rf "$TARGET"
+mv "$STAGED" "$TARGET"
+open "$TARGET"
+echo "Installed $TARGET"
