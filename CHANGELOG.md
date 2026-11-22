@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Smoother marquee:** a long name now loops seamlessly, with a second copy following the first, instead of leaving the box blank between passes, and the end of the name no longer scrolls in blank.
+
 ## 0.4 — 2026-11-22
 
 - **Spike marquee:** during a big CPU spike, the graph gives way to the busiest app's name, scrolling. Hover it for its CPU and what started it, such as the `node` behind a test's headless Chrome.
