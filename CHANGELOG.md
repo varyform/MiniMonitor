@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6 — 2026-11-22
+
 - **Marquee scrolls steadily:** the name no longer jumps back to its start every 2 seconds; it loops on without a break for as long as the spike lasts.
 
 ## 0.5 — 2026-11-22
