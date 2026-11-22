@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Runs a long task in a named Rex tab of this session, reusing the tab by
+# name: a finished run's tab is closed and reopened, so each task keeps one
+# tab. Waits for it, prints the last lines and exits with the task's status.
+#
+#   bin/rex-task ci bin/ci
+#   bin/rex-task build swift build
+#   REX_TASK_TAIL=80 REX_TASK_TIMEOUT=20m bin/rex-task deploy bin/with-secrets kamal deploy
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+name=${1:?usage: bin/rex-task <tab-name> <command...>}
+shift
+session=${REX_SESSION:?not running inside Rex}
+
+existing=$(rex window ls -s "$session" --json | jq -r --arg name "$name" '.windows[] | select(.label == $name) | .window_id')
+for window in $existing; do
+  rex window close -s "$session" "$window" >/dev/null
+done
+
+block=$(rex window new -s "$session" "$name" -c "$PWD" --keep-open --focus=false --json -- "$@" | jq -r '.block_ids[0]')
+rex wait -s "$session" "$block" --for "${REX_TASK_TIMEOUT:-10m}" --json >/dev/null 2>&1 || true
+rex capture -s "$session" -b "$block" --trim --unwrap | tail -n "${REX_TASK_TAIL:-40}"
+status=$(rex block call -s "$session" -b "$block" process | jq -r '.last_exit.exit_code // "running"')
+echo "[$name] exit: $status"
+[ "$status" = "0" ]
