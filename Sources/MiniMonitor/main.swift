@@ -91,9 +91,10 @@ final class CPUTemperature {
     /// "M3" from "Apple M3 Max".
     private static func chipGeneration() -> String {
         var size = 0
-        sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0)
+        guard sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0) == 0, size > 0
+        else { return "" }
         var brand = [CChar](repeating: 0, count: size)
-        sysctlbyname("machdep.cpu.brand_string", &brand, &size, nil, 0)
+        guard sysctlbyname("machdep.cpu.brand_string", &brand, &size, nil, 0) == 0 else { return "" }
         let name = String(cString: brand)
         return name.range(of: #"M\d"#, options: .regularExpression).map { String(name[$0]) } ?? ""
     }
@@ -124,7 +125,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var timer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-
         loginItem.target = self
         menu.addItem(loginItem)
         menu.addItem(.separator())
@@ -147,13 +147,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self, selector: #selector(start), name: NSWorkspace.screensDidWakeNotification,
             object: nil)
 
-        _ = cpu.sample()  // prime the tick baseline
-        tick()
         start()
     }
 
+    /// Redraws at once instead of a tick later. Re-primes the load baseline so the
+    /// first sample covers one interval, not the time since launch or screen sleep.
     @objc private func start() {
         guard timer == nil else { return }
+        _ = cpu.sample()
+        redraw()
         let timer = Timer(
             timeInterval: interval, target: self, selector: #selector(tick), userInfo: nil,
             repeats: true)
@@ -172,6 +174,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             history.append(load)
             if history.count > historyCount { history.removeFirst() }
         }
+        redraw()
+    }
+
+    private func redraw() {
         guard let button = statusItem.button else { return }
         let text = temperature.read().map { "\(Int($0.rounded()))°" } ?? "--°"
         button.image = statusImage(text: text)
@@ -190,16 +196,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let chartX = textWidth + graphGap
         let size = NSSize(width: chartX + graphSize.width, height: graphSize.height)
         let image = NSImage(size: size, flipped: false) { bounds in
-            let pixel = 1 / (NSScreen.main?.backingScaleFactor ?? 2)
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            // The handler runs once per display scale, so take the pixel size from the
+            // context being drawn into rather than from one screen.
+            let scale = context.userSpaceToDeviceSpaceTransform.a
+            let pixel = 1 / (scale > 0 ? scale : 2)
             let half = pixel / 2
 
             // Digits centred on the chart, baseline snapped to a device pixel.
-            if let context = NSGraphicsContext.current?.cgContext {
-                let baseline = ((bounds.midY - capHeight / 2) / pixel).rounded() * pixel
-                context.textMatrix = .identity
-                context.textPosition = CGPoint(x: 0, y: baseline)
-                CTLineDraw(line, context)
-            }
+            let baseline = ((bounds.midY - capHeight / 2) / pixel).rounded() * pixel
+            context.textMatrix = .identity
+            context.textPosition = CGPoint(x: 0, y: baseline)
+            CTLineDraw(line, context)
 
             // Same geometry as Stats' LineChart widget in "frame" mode.
             let rect = NSRect(x: chartX, y: 0, width: bounds.width - chartX, height: bounds.height)
@@ -231,10 +239,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 area.line(to: NSPoint(x: points[points.count - 1].x, y: plot.minY))
                 area.line(to: NSPoint(x: points[0].x, y: plot.minY))
                 area.close()
-                NSGradient(
-                    starting: NSColor.black.withAlphaComponent(1.0),
-                    ending: NSColor.black.withAlphaComponent(1.0)
-                )?.draw(in: area, angle: 90)
+                NSColor.black.setFill()
+                area.fill()
             }
 
             NSColor.black.setStroke()
