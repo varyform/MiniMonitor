@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3 — 2026-11-22
+
 - **System daemons too:** processes run by root and other users, such as Spotlight's or Time Machine's, are watched as well, read through the system's own `ps`. Turn it off with Watch System Daemons in the right-click menu.
 
 ## 0.2 — 2026-11-22
