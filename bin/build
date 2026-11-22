@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Builds build/MiniMonitor.app (release, ad-hoc signed).
+# Builds build/MiniMonitor.app (release): signed with the Developer ID certificate
+# and the hardened runtime when the keychain has one, else ad-hoc.
+# SIGN_TIMESTAMP=1 adds the secure timestamp notarization needs (bin/release sets it;
+# it costs a round trip to Apple, so everyday builds skip it).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -16,5 +19,12 @@ xcrun actool Resources/AppIcon.icon --compile "$APP/Contents/Resources" \
   --output-partial-info-plist build/icon-info.plist >/dev/null
 cp "$(swift build -c release --show-bin-path)/MiniMonitor" "$APP/Contents/MacOS/"
 
-codesign --force --sign - "$APP"
+identity="$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -1)"
+if [ -n "$identity" ]; then
+  timestamp=--timestamp=none
+  [ "${SIGN_TIMESTAMP:-}" = 1 ] && timestamp=--timestamp
+  codesign --force --options runtime "$timestamp" --sign "$identity" "$APP"
+else
+  codesign --force --sign - "$APP"
+fi
 echo "Built $APP"

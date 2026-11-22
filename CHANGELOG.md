@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Notarized:** the app is signed with a Developer ID and notarized by Apple, so it opens without a Gatekeeper warning or a trip to Privacy & Security.
 - **Smoother marquee:** a long name now loops seamlessly, with a second copy following the first, instead of leaving the box blank between passes, and the end of the name no longer scrolls in blank.
 
 ## 0.4 — 2026-11-22

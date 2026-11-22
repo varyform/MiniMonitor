@@ -2,6 +2,8 @@
 
 A tiny macOS menu bar app that shows the CPU temperature and a CPU load graph, and nothing else. I built it to replace iStat Menus for those two readings.
 
+<img src="docs/spike.gif" width="192" alt="The menu bar item during a CPU spike: the load graph gives way to the busiest process's name, crazy-load, scrolling, then comes back">
+
 - **Temperature:** the hottest CPU core, read from the SMC. This is the same method as the "Hottest CPU" reading in [Stats](https://github.com/exelban/stats), and it lands close to iStat Menus.
 - **Load graph:** about 2 minutes of total CPU usage. During a big spike (70% of all cores for 4 seconds), the graph turns into a scrolling marquee with the busiest app's name. Hover it to see its CPU and what started it.
 - **Left-click:** opens Activity Monitor.
@@ -25,7 +27,7 @@ It scans processes every 30 seconds, also while the display sleeps, which adds a
 
 ## Install
 
-Download the zip from [Releases](https://github.com/varyform/MiniMonitor/releases), unzip it and move MiniMonitor.app to Applications. It isn't notarized, so the first time, open it, then choose **Open Anyway** in System Settings › Privacy & Security.
+Download the zip from [Releases](https://github.com/varyform/MiniMonitor/releases), unzip it and move MiniMonitor.app to Applications. From 0.5 on it's signed with a Developer ID and notarized by Apple, so it opens like any other app.
 
 ## Build
 
@@ -34,6 +36,8 @@ mise run build     # builds build/MiniMonitor.app
 mise run install   # also copies it to /Applications and launches it
 mise run ci        # format lint, tests and the app build
 ```
+
+With a Developer ID certificate in the keychain, builds are signed with it (hardened runtime); otherwise they're signed ad hoc. `mise run release <version>` also has Apple notarize the app (any `notarytool` keychain profile of the team, `NOTARY_PROFILE`) and staples the ticket before anything is committed or published.
 
 `mise tasks` lists the rest (`run`, `test`, `lint`, `format`, `release`, and `load`, which pegs every core for 30 seconds so you can see the spike marquee).
 
