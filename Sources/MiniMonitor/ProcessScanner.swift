@@ -8,9 +8,11 @@ import IOKit.pwr_mgt
 @_silgen_name("responsibility_get_pid_responsible_for_pid")
 private func responsiblePid(_ pid: pid_t) -> pid_t
 
-/// Per-process CPU and GPU use, from deltas between scans. Processes owned by other
-/// users can't be read without root, so system daemons running as root are left out.
+/// Per-process CPU and GPU use, from deltas between scans. Other users' processes
+/// (root's daemons, mostly) can't be read directly; with `readsOtherUsers` they come
+/// from /bin/ps, which is setuid root.
 final class ProcessScanner {
+    var readsOtherUsers = true
     private let ownPid = getpid()
     private let secondsPerTick: Double
     private var previous: [pid_t: (start: UInt64, cpu: UInt64, gpu: UInt64)] = [:]
@@ -21,6 +23,7 @@ final class ProcessScanner {
     /// each scan doesn't pay for hundreds of failing calls.
     private var unreadable: Set<pid_t> = []
     private var scansUntilRetry = 0
+    private var previousOthers: [pid_t: (start: String, cpu: Double, gpu: UInt64)] = [:]
 
     init() {
         var timebase = mach_timebase_info()
@@ -87,7 +90,62 @@ final class ProcessScanner {
         }
         previous = seen
         paths = paths.filter { seen[$0.key] != nil }
+        if readsOtherUsers {
+            let others = pids.prefix(count).filter { unreadable.contains($0) }
+            samples += otherUsersProcesses(others, interval: interval, gpuTimes: gpuTimes)
+        } else {
+            previousOthers = [:]
+        }
         return samples
+    }
+
+    /// One /bin/ps call for every pid we can't read ourselves (~8 ms of CPU for 300).
+    /// These are never test browsers and never quit: they aren't ours to signal.
+    private func otherUsersProcesses(
+        _ pids: [pid_t], interval: TimeInterval, gpuTimes: [pid_t: UInt64]
+    ) -> [ProcessSample] {
+        guard !pids.isEmpty,
+            let output = Self.run(
+                "/bin/ps",
+                [
+                    "-o", "pid=,ppid=,lstart=,time=,comm=", "-p",
+                    pids.map(String.init).joined(separator: ","),
+                ])
+        else { return [] }
+        let now = Date()
+        var seen: [pid_t: (start: String, cpu: Double, gpu: UInt64)] = [:]
+        var samples: [ProcessSample] = []
+        for row in Watchdog.psRows(output) {
+            let gpu = gpuTimes[row.pid] ?? 0
+            seen[row.pid] = (row.start, row.cpu, gpu)
+            var sample = ProcessSample(pid: row.pid)
+            sample.ppid = row.ppid
+            sample.name = Watchdog.displayName(forPath: row.path)
+            sample.age = row.started.map { now.timeIntervalSince($0) } ?? .infinity
+            if interval > 0, let old = previousOthers[row.pid], old.start == row.start {
+                sample.cpu = max(0, row.cpu - old.cpu) / interval
+                if gpu > old.gpu { sample.gpu = Double(gpu - old.gpu) / 1e9 / interval }
+            }
+            if sample.cpu >= 0.01 || sample.gpu >= 0.01 { sample.group = row.path }
+            samples.append(sample)
+        }
+        previousOthers = seen
+        return samples
+    }
+
+    private static func run(_ tool: String, _ arguments: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: tool)
+        process.arguments = arguments
+        process.environment = ["LC_ALL": "C"]  // lstart in English, whatever the locale
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        // Read before waiting: the output is bigger than a pipe's buffer.
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// Whether `process` is still the very process that was scanned, so a signal

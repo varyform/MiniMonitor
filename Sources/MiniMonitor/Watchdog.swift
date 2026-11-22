@@ -74,6 +74,63 @@ enum Watchdog {
         return path.hasPrefix(responsiblePath[..<bundle.upperBound]) ? responsiblePath : path
     }
 
+    struct PSRow: Equatable {
+        var pid: pid_t
+        var ppid: pid_t
+        var start: String  // lstart as printed; tells a reused pid apart
+        var started: Date?
+        var cpu: Double  // seconds, user + system
+        var path: String
+    }
+
+    /// Rows of `ps -o pid=,ppid=,lstart=,time=,comm=` (LC_ALL=C), e.g.
+    /// "  629     1 Tue Nov 17 01:05:27 2026     138:55.83 /usr/sbin/bluetoothd".
+    static func psRows(_ output: String) -> [PSRow] {
+        output.split(separator: "\n").compactMap { line in
+            var rest = Substring(line)
+            var fields: [Substring] = []
+            while fields.count < 8 {
+                rest = rest.drop { $0 == " " }
+                let field = rest.prefix { $0 != " " }
+                guard !field.isEmpty else { return nil }
+                fields.append(field)
+                rest = rest.dropFirst(field.count)
+            }
+            let path = rest.drop { $0 == " " }
+            guard !path.isEmpty, let pid = pid_t(fields[0]), let ppid = pid_t(fields[1]),
+                let cpu = cpuSeconds(fields[7])
+            else { return nil }
+            let start = fields[2...6].joined(separator: " ")
+            return PSRow(
+                pid: pid, ppid: ppid, start: start, started: lstart.date(from: start), cpu: cpu,
+                path: String(path))
+        }
+    }
+
+    /// Seconds from ps's "[dd-][hh:]mm:ss.ss".
+    static func cpuSeconds<S: StringProtocol>(_ text: S) -> Double? {
+        var clock = Substring(text)
+        var days = 0.0
+        if let dash = clock.firstIndex(of: "-") {
+            guard let value = Double(clock[..<dash]) else { return nil }
+            days = value
+            clock = clock[clock.index(after: dash)...]
+        }
+        var seconds = 0.0
+        for part in clock.split(separator: ":") {
+            guard let value = Double(part) else { return nil }
+            seconds = seconds * 60 + value
+        }
+        return days * 86_400 + seconds
+    }
+
+    private static let lstart: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "EEE MMM d HH:mm:ss yyyy"
+        return formatter
+    }()
+
     /// "Google Chrome" for an app's executable, else the executable's name.
     static func displayName(forPath path: String) -> String {
         let components = path.split(separator: "/")

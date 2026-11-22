@@ -16,11 +16,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Every 30 s: a scan reads ~2,000 processes one syscall each (~30 ms).
     private let scanInterval: TimeInterval = 30
     private static let ignoredKey = "ignoredApps"
+    private static let daemonsKey = "watchSystemDaemons"
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private let loginItem = NSMenuItem(
         title: "Start at Login", action: #selector(toggleLogin), keyEquivalent: "")
+    private let daemonsItem = NSMenuItem(
+        title: "Watch System Daemons", action: #selector(toggleDaemons), keyEquivalent: "")
     private let cpu = CPULoad()
     private let temperature = CPUTemperature()
     private let scanner = ProcessScanner()
@@ -38,6 +41,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         loginItem.target = self
+        daemonsItem.target = self
+        UserDefaults.standard.register(defaults: [Self.daemonsKey: true])
+        scanner.readsOtherUsers = UserDefaults.standard.bool(forKey: Self.daemonsKey)
         alerts.onQuitBrowsers = { [weak self] in self?.quitStaleBrowsers() }
         alerts.onIgnore = { [weak self] group in self?.ignore(group) }
         alerts.onShow = { [weak self] in self?.openActivityMonitor() }
@@ -313,6 +319,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(entry)
         }
 
+        daemonsItem.state = scanner.readsOtherUsers ? .on : .off
+        daemonsItem.toolTip =
+            "Also watch processes run by root and other users, read through /bin/ps"
+        menu.addItem(daemonsItem)
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(loginItem)
         menu.addItem(.separator())
@@ -343,6 +353,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 withBundleIdentifier: "com.apple.ActivityMonitor")
         else { return }
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    @objc private func toggleDaemons() {
+        scanner.readsOtherUsers.toggle()
+        UserDefaults.standard.set(scanner.readsOtherUsers, forKey: Self.daemonsKey)
     }
 
     @objc private func toggleLogin() {

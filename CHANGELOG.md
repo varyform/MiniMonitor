@@ -6,6 +6,7 @@
 
 - **Stale test browsers:** when headless Chrome left behind by a killed test run keeps using CPU, a notification says so right away, and MiniMonitor quits it 2 minutes later unless you click Quit Now first. The right-click menu lists every stale browser, with Quit Stale Browsers.
 - **Unusual load:** if an app keeps more than a core of CPU, or half the GPU, busy for 5 minutes while you're away, you get a notification. Anything you started in the last 15 minutes doesn't count, and neither does a video or call keeping the display awake. Ignore This App silences one, and Ignored Apps in the menu brings it back.
+- **System daemons too:** processes run by root and other users, such as Spotlight's or Time Machine's, are watched as well, read through the system's own `ps`. Turn it off with Watch System Daemons in the right-click menu.
 - **Attention dot:** a dot left of the temperature shows while either is going on; hover or right-click to see what.
 
 ## 0.1 — 2026-11-22

@@ -170,6 +170,33 @@ struct ProcessHelperTests {
         #expect(Watchdog.arguments(fromProcArgs: []).isEmpty)
     }
 
+    @Test func psOutput() {
+        let output = """
+                1     0 Tue Nov 17 01:05:27 2026      81:13.78 /sbin/launchd
+              742     1 Sun Nov  8 23:59:01 2026  1-02:03:04.50 /System/Library/CoreServices/TimeMachine/backupd
+              900     1 Sun Nov 22 08:02:41 2026       0:00.21 /Library/Application Support/Some Daemon/daemon
+            garbage
+            """
+        let rows = Watchdog.psRows(output)
+        #expect(rows.map(\.pid) == [1, 742, 900])
+        let launchd: Double = 81 * 60 + 13.78
+        #expect(abs(rows[0].cpu - launchd) < 1e-9)
+        let backupd: Double = 86_400 + 7_384.5  // 1 day, 2:03:04.5
+        #expect(abs(rows[1].cpu - backupd) < 1e-9)
+        #expect(rows[1].start == "Sun Nov 8 23:59:01 2026")
+        #expect(rows[1].started != nil)
+        #expect(rows[2].path == "/Library/Application Support/Some Daemon/daemon")
+        #expect(Watchdog.cpuSeconds("0:00.21") == 0.21)
+        #expect(Watchdog.cpuSeconds("x") == nil)
+    }
+
+    @Test func scannerReadsRootDaemonsThroughPS() {
+        let scanner = ProcessScanner()
+        #expect(scanner.scan().contains { $0.pid == 1 })  // launchd, owned by root
+        scanner.readsOtherUsers = false
+        #expect(!scanner.scan().contains { $0.pid == 1 })
+    }
+
     @Test func gpuClientCreator() {
         #expect(Watchdog.pid(fromCreator: "pid 636, WindowServer") == 636)
         #expect(Watchdog.pid(fromCreator: "WindowServer") == nil)

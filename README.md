@@ -16,7 +16,7 @@ It updates every 2 seconds and pauses while the display sleeps. It uses about 0.
 - **Unusual load:** an app, with its helpers counted together, that averages more than one core of CPU or half the GPU for 5 minutes while you've been away from the keyboard and mouse for 5 minutes. Processes started in the last 15 minutes don't count, since that's you at work, and nothing is raised while something keeps the display awake, such as a video or a call. Each alert has **Ignore This App**, and **Ignored Apps** in the menu undoes it.
 - While either is going on, a dot shows left of the temperature. The tooltip and the right-click menu say what it is.
 
-It scans processes every 30 seconds, also while the display sleeps, which adds about 0.1% CPU. Daemons running as root can't be read without root, so they aren't watched.
+It scans processes every 30 seconds, also while the display sleeps, which adds about 0.1% CPU. Processes run by root and other users, mostly system daemons, are read through `/bin/ps`, which macOS installs setuid root, so no helper or password is needed. **Watch System Daemons** in the menu turns that off.
 
 ## Requirements
 
