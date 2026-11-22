@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7 — 2026-11-22
+
 - **Marquee names the parent:** the spike's name now says what started it, parent first, such as `nxplay › python3.14`. A shell running a script goes by the script's name rather than `bash`; a command you typed yourself shows on its own. The tooltip and the Busiest menu name launchers the same way.
 
 ## 0.6 — 2026-11-22
