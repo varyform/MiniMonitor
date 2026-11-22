@@ -14,6 +14,10 @@ It updates every 2 seconds and pauses while the display sleeps. It uses about 0.
 - An Apple Silicon Mac (M1–M5) running macOS 13 or later. On Intel Macs the load graph works, but the temperature shows `--°`.
 - Xcode, to build it, and [mise](https://mise.jdx.dev), which installs the pinned Swift toolchain (`mise install`).
 
+## Install
+
+Download the zip from [Releases](https://github.com/varyform/MiniMonitor/releases), unzip it and move MiniMonitor.app to Applications. It isn't notarized, so the first time, open it, then choose **Open Anyway** in System Settings › Privacy & Security.
+
 ## Build
 
 ```sh
@@ -22,7 +26,7 @@ mise run install   # also copies it to /Applications and launches it
 mise run ci        # format lint, tests and the app build
 ```
 
-`mise tasks` lists the rest (`run`, `test`, `lint`, `format`).
+`mise tasks` lists the rest (`run`, `test`, `lint`, `format`, `release`).
 
 Install to `/Applications` before you turn on **Start at Login**.
 

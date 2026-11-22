@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Releases a version: dates the changelog's Unreleased section, sets the
+# version in Info.plist, runs CI, commits, tags vVERSION, pushes and publishes
+# a GitHub release with the zipped app.
+# Usage: bin/release 0.2
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+version=${1:?usage: bin/release <version>}
+tag="v$version"
+
+[ "$(git branch --show-current)" = main ] || { echo "Release from main" >&2; exit 1; }
+[ -z "$(git status --porcelain)" ] || { echo "Working tree is not clean" >&2; exit 1; }
+! git rev-parse -q --verify "refs/tags/$tag" >/dev/null || { echo "$tag already exists" >&2; exit 1; }
+
+# The release notes are the Unreleased section's bullets.
+notes=$(awk '/^## Unreleased/ { on = 1; next } /^## / { on = 0 } on' CHANGELOG.md | sed '/./,$!d')
+[ -n "$notes" ] || { echo "CHANGELOG.md has nothing under Unreleased" >&2; exit 1; }
+
+today=$(date +%Y-%m-%d)
+sed -i '' "s/^## Unreleased$/## Unreleased\\
+\\
+## $version — $today/" CHANGELOG.md
+plutil -replace CFBundleShortVersionString -string "$version" Info.plist
+# Build number: commits on main, so it only grows (+1 for the release commit).
+plutil -replace CFBundleVersion -string "$(($(git rev-list --count HEAD) + 1))" Info.plist
+
+bin/ci
+
+git add CHANGELOG.md Info.plist
+git commit -q -m "Release $version"
+git tag -a "$tag" -m "MiniMonitor $version"
+git push -q origin main "$tag"
+
+zip="build/MiniMonitor-$version.zip"
+rm -f "$zip"
+ditto -c -k --keepParent build/MiniMonitor.app "$zip"
+gh release create "$tag" "$zip" --title "MiniMonitor $version" --notes "$notes
+
+The app isn't notarized. After moving it to Applications, open it once, then choose Open Anyway in System Settings › Privacy & Security (or run \`xattr -dr com.apple.quarantine /Applications/MiniMonitor.app\`)."
+echo "Released $tag"

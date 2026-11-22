@@ -21,6 +21,10 @@ run = "pkill -x MiniMonitor || true; open build/MiniMonitor.app"
 description = "Build, install to /Applications and launch, replacing the running copy"
 run = "bin/install"
 
+[tasks.release]
+description = "Release a version to GitHub: mise run release 0.2"
+run = "bin/release"
+
 [tasks.test]
 description = "Run the unit tests"
 run = "swift test"
