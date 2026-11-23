@@ -36,6 +36,19 @@ struct SensorTests {
         #expect(CPUTemperature.fourCC("Tp09") == 0x5470_3039)
     }
 
+    @Test func keyName() {
+        #expect(CPUTemperature.name(of: 0x5470_3039) == "Tp09")
+    }
+
+    @Test(arguments: [
+        ("Tc0x", true), ("Tcax", true), ("Tp9x", true),
+        ("Tp9a", false), ("Tp9z", false), ("TCMz", false), ("Th0x", false), ("Ts0x", false),
+        ("Tp0", false),
+    ])
+    func coreKey(name: String, isCore: Bool) {
+        #expect(CPUTemperature.isCoreKey(name) == isCore)
+    }
+
     @Test func loadIsAFractionAfterTheFirstSample() throws {
         let load = CPULoad()
         #expect(load.sample() == nil)
