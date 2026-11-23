@@ -44,6 +44,7 @@ final class CPUTemperature {
     ]
     private static let readKeyInfo: UInt8 = 9
     private static let readBytes: UInt8 = 5
+    private static let readKeyAtIndex: UInt8 = 8
 
     private var connection: io_connect_t = 0
     private var requests: [SMCParam] = []  // prepared once, replayed every read
@@ -51,20 +52,51 @@ final class CPUTemperature {
     init() {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSMC"))
         defer { IOObjectRelease(service) }
-        guard service != 0, IOServiceOpen(service, mach_task_self_, 0, &connection) == KERN_SUCCESS,
-            let keys = Self.coreKeys[Self.chipGeneration()]
+        guard service != 0, IOServiceOpen(service, mach_task_self_, 0, &connection) == KERN_SUCCESS
         else { return }
 
-        for key in keys.split(separator: " ") {
+        let keys =
+            Self.coreKeys[Self.chipGeneration()]?.split(separator: " ").map(Self.fourCC) ?? []
+        requests = keys.compactMap(request(for:))
+        // macOS 27 renamed the M1's core sensors (Tp09 and friends are gone), so
+        // when the table finds nothing, look the core keys up in the SMC itself.
+        if requests.isEmpty { requests = discoveredCoreKeys().compactMap(request(for:)) }
+    }
+
+    /// A prepared read for a 4-byte float key; nil if the SMC has no such key.
+    private func request(for key: UInt32) -> SMCParam? {
+        var request = SMCParam()
+        request.key = key
+        request.data8 = Self.readKeyInfo
+        guard let info = call(request)?.keyInfo,
+            info.dataType == Self.fourCC("flt "), info.dataSize == 4
+        else { return nil }
+        request.data8 = Self.readBytes
+        request.keyInfo.dataSize = info.dataSize
+        return request
+    }
+
+    /// Every key the SMC lists that `isCoreKey` accepts (~1,000 keys, read once).
+    private func discoveredCoreKeys() -> [UInt32] {
+        // #KEY: the key count, a big-endian ui32.
+        var count = SMCParam()
+        count.key = Self.fourCC("#KEY")
+        count.data8 = Self.readKeyInfo
+        guard let size = call(count)?.keyInfo.dataSize, size == 4 else { return [] }
+        count.data8 = Self.readBytes
+        count.keyInfo.dataSize = size
+        guard let output = call(count) else { return [] }
+        let total = withUnsafeBytes(of: output.bytes) {
+            $0.prefix(4).reduce(0) { $0 << 8 | UInt32($1) }
+        }
+        return (0..<total).compactMap { index in
             var request = SMCParam()
-            request.key = Self.fourCC(key)
-            request.data8 = Self.readKeyInfo
-            guard let info = call(request)?.keyInfo,
-                info.dataType == Self.fourCC("flt "), info.dataSize == 4
-            else { continue }
-            request.data8 = Self.readBytes
-            request.keyInfo.dataSize = info.dataSize
-            requests.append(request)
+            request.data8 = Self.readKeyAtIndex
+            request.data32 = index
+            guard let key = call(request)?.key, Self.isCoreKey(Self.name(of: key)) else {
+                return nil
+            }
+            return key
         }
     }
 
@@ -102,5 +134,18 @@ final class CPUTemperature {
 
     static func fourCC<S: StringProtocol>(_ code: S) -> UInt32 {
         code.utf8.reduce(0) { $0 << 8 | UInt32($1) }
+    }
+
+    static func name(of key: UInt32) -> String {
+        String(decoding: [24, 16, 8, 0].map { UInt8((key >> $0) & 0xff) }, as: UTF8.self)
+    }
+
+    /// A per-core die sensor in the macOS 27 naming: Tc (E-core) or Tp (P-core), the
+    /// core, then "x", the raw reading. ("a" is a smoothed copy; "b" and "z" add an
+    /// offset of up to 15° on P-cores, which Stats' "hottest CPU" doesn't include.)
+    static func isCoreKey(_ name: String) -> Bool {
+        let chars = Array(name)
+        return chars.count == 4 && chars[0] == "T" && (chars[1] == "c" || chars[1] == "p")
+            && (chars[2].isNumber || chars[2].isLowercase) && chars[3] == "x"
     }
 }

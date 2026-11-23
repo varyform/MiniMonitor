@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Temperature on M1 with macOS 27:** the menu bar shows the CPU temperature again instead of `--°`. macOS 27 renamed the M1's core sensors, so when the known ones are missing MiniMonitor now finds the core sensors itself.
+
 ## 0.7 — 2026-11-22
 
 - **Marquee names the parent:** the spike's name now says what started it, parent first, such as `nxplay › python3.14`. A shell running a script goes by the script's name rather than `bash`; a command you typed yourself shows on its own. The tooltip and the Busiest menu name launchers the same way.
