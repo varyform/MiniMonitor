@@ -45,6 +45,7 @@ final class CPUTemperature {
     private static let readKeyInfo: UInt8 = 9
     private static let readBytes: UInt8 = 5
     private static let readKeyAtIndex: UInt8 = 8
+    private static let maxKeys: UInt32 = 10_000
 
     private var connection: io_connect_t = 0
     private var requests: [SMCParam] = []  // prepared once, replayed every read
@@ -89,7 +90,9 @@ final class CPUTemperature {
         let total = withUnsafeBytes(of: output.bytes) {
             $0.prefix(4).reduce(0) { $0 << 8 | UInt32($1) }
         }
-        return (0..<total).compactMap { index in
+        // A misread count mustn't stall launch with millions of calls; real SMCs list
+        // a few thousand keys at most.
+        return (0..<min(total, Self.maxKeys)).compactMap { index in
             var request = SMCParam()
             request.data8 = Self.readKeyAtIndex
             request.data32 = index
