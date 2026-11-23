@@ -1,7 +1,7 @@
 import AppKit
 import ServiceManagement
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private let interval: TimeInterval = 2
     // Stats' line chart widget is 32pt wide; this one is 20% wider. Height is the
     // menu bar height minus 2pt margins, as in Stats.
@@ -17,11 +17,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let scanInterval: TimeInterval = 30
     private static let ignoredKey = "ignoredApps"
     private static let daemonsKey = "watchSystemDaemons"
+    private static let watchKey = "watchProcesses"
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private let loginItem = NSMenuItem(
         title: "Start at Login", action: #selector(toggleLogin), keyEquivalent: "")
+    private let watchItem = NSMenuItem(
+        title: "Watch Processes", action: #selector(toggleWatching), keyEquivalent: "")
     private let daemonsItem = NSMenuItem(
         title: "Watch System Daemons", action: #selector(toggleDaemons), keyEquivalent: "")
     private let cpu = CPULoad()
@@ -34,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var staleBrowsers: [StaleBrowser] = []
     private var history: [Double] = []  // oldest first, at most historyCount
     private var timer: Timer?
+    private var scans: Timer?  // the watchdog's; nil while watching is off
     private var lastProcesses: [ProcessSample] = []  // the watchdog's latest scan
     // During a CPU spike the chart gives way to the busiest app's name. Its own
     // scanner, so its quick rescans don't upset the watchdog's 30-second deltas.
@@ -52,8 +56,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         loginItem.target = self
+        watchItem.target = self
         daemonsItem.target = self
-        UserDefaults.standard.register(defaults: [Self.daemonsKey: true])
+        UserDefaults.standard.register(defaults: [Self.daemonsKey: true, Self.watchKey: true])
         scanner.readsOtherUsers = UserDefaults.standard.bool(forKey: Self.daemonsKey)
         alerts.onQuitBrowsers = { [weak self] in self?.quitStaleBrowsers() }
         alerts.onIgnore = { [weak self] group in self?.ignore(group) }
@@ -77,12 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil)
 
         start()
-        _ = scanner.scan()  // baseline for the first deltas
-        let scans = Timer(
-            timeInterval: scanInterval, target: self, selector: #selector(scan), userInfo: nil,
-            repeats: true)
-        scans.tolerance = scanInterval / 5
-        RunLoop.main.add(scans, forMode: .common)
+        if UserDefaults.standard.bool(forKey: Self.watchKey) { startWatching() }
     }
 
     /// Redraws at once instead of a tick later. Re-primes the load baseline so the
@@ -153,6 +153,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: - Watchdog
+
+    private func startWatching() {
+        guard scans == nil else { return }
+        _ = scanner.scan()  // baseline for the first deltas
+        let scans = Timer(
+            timeInterval: scanInterval, target: self, selector: #selector(scan), userInfo: nil,
+            repeats: true)
+        scans.tolerance = scanInterval / 5
+        RunLoop.main.add(scans, forMode: .common)
+        self.scans = scans
+    }
+
+    /// No scans, alerts or auto-quits; what was found so far is dropped, so nothing
+    /// half-finished (a pending auto-quit, an episode's dot) carries over.
+    private func stopWatching() {
+        scans?.invalidate()
+        scans = nil
+        lastProcesses = []
+        staleBrowsers = []
+        browserWatch = BrowserWatch()
+        loadWatch = LoadWatch(ignored: loadWatch.ignored)
+        alerts.clearAll()
+        redraw()
+    }
+
+    @objc private func toggleWatching() {
+        let watching = scans == nil
+        UserDefaults.standard.set(watching, forKey: Self.watchKey)
+        if watching { startWatching() } else { stopWatching() }
+    }
 
     @objc private func scan() {
         let processes = scanner.scan()
@@ -428,7 +458,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(entry)
         }
 
+        watchItem.state = scans != nil ? .on : .off
+        watchItem.toolTip =
+            "Alert about stale test browsers and apps busy while you're away, and quit the browsers"
+        menu.addItem(watchItem)
         daemonsItem.state = scanner.readsOtherUsers ? .on : .off
+        daemonsItem.indentationLevel = 1
         daemonsItem.toolTip =
             "Also watch processes run by root and other users, read through /bin/ps"
         menu.addItem(daemonsItem)
@@ -462,6 +497,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 withBundleIdentifier: "com.apple.ActivityMonitor")
         else { return }
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    // The menu enables items by itself; this greys out what watching being off disables.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        menuItem !== daemonsItem || scans != nil
     }
 
     @objc private func toggleDaemons() {

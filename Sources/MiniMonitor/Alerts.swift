@@ -66,6 +66,11 @@ final class Alerts: NSObject, UNUserNotificationCenterDelegate {
             userInfo: ["group": episode.group])
     }
 
+    /// Takes back everything shown, for when watching is turned off.
+    func clearAll() {
+        center?.removeAllDeliveredNotifications()
+    }
+
     func clearLoad(_ group: String) {
         center?.removeDeliveredNotifications(withIdentifiers: [Self.loadID(group)])
     }

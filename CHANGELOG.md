@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Watch Processes switch:** turn off the watchdog from the right-click menu. MiniMonitor then stops scanning processes, sends no stale-browser or unusual-load alerts, quits nothing, and takes back the notifications it showed. The temperature, the graph and the spike marquee keep working.
+
 ## 0.8 — 2026-11-23
 
 - **Temperature on M1 with macOS 27:** the menu bar shows the CPU temperature again instead of `--°`. macOS 27 renamed the M1's core sensors, so when the known ones are missing MiniMonitor now finds the core sensors itself.
